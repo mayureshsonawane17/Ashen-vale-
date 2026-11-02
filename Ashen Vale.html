@@ -462,6 +462,29 @@ kbd {
         tone(110, 1.0, 'sawtooth', 0.06, 0, 0.15);
         tone(165, 1.4, 'triangle', 0.06, 0, 0.3);
         break;
+      case 'heart_steal':
+        tone(659, 0.25, 'sine', 0.05, -200);
+        tone(988, 0.35, 'triangle', 0.04, -400, 0.08);
+        tone(440, 0.45, 'sawtooth', 0.03, -150, 0.16);
+        break;
+      case 'king_roar':
+        tone(65, 0.9, 'sawtooth', 0.10, -25);
+        tone(98, 1.1, 'square', 0.08, -40, 0.1);
+        tone(146, 0.8, 'sawtooth', 0.06, -60, 0.2);
+        break;
+      case 'laser_charge':
+        tone(220, 0.55, 'sawtooth', 0.04, 580);
+        tone(440, 0.55, 'sine', 0.03, 880);
+        break;
+      case 'laser_fire':
+        tone(920, 0.38, 'sawtooth', 0.09, -750);
+        tone(130, 0.45, 'square', 0.08, -60);
+        tone(55, 0.5, 'sine', 0.10, -20);
+        break;
+      case 'wing_flap':
+        tone(85, 0.18, 'triangle', 0.06, -45);
+        tone(140, 0.12, 'sine', 0.04, -70);
+        break;
     }
   }
 
@@ -532,46 +555,48 @@ kbd {
       if (s === 16) { tone(N.Bb2, 1.8, 'sine', 0.03); tone(N.F3, 1.8, 'sine', 0.02); }
 
       musicStep++;
-    } else if (musicTrack === 'boss') {
-      var bStepDur = 0.108; // BPM ~138 (16th notes)
+    } else if (musicTrack === 'boss' || musicTrack === 'boss_phase2') {
+      var isPhase2 = musicTrack === 'boss_phase2';
+      var bStepDur = isPhase2 ? 0.092 : 0.108; // BPM ~163 in Phase 2
       musicTimer = bStepDur;
       var bs = musicStep % 16;
-      var hpPct = (boss && boss.hp > 0) ? (boss.hp / boss.maxhp) : 0.5;
+      var activeB = (boss2 && boss2.hp > 0) ? boss2 : boss;
+      var hpPct = (activeB && activeB.hp > 0) ? (activeB.hp / activeB.maxhp) : (isPhase2 ? 0.4 : 0.5);
 
       // Layer 1 (100%–70% HP): Heavy War Drums & Pulsing Dark Bass
-      if (bs === 0 || bs === 8 || (hpPct < 0.35 && (bs === 4 || bs === 12))) {
-        tone(65, 0.12, 'triangle', 0.07, -35); // War kick
+      if (bs === 0 || bs === 8 || (hpPct < 0.35 && (bs === 4 || bs === 12)) || (isPhase2 && bs % 4 === 0)) {
+        tone(60, 0.12, 'triangle', 0.08, -35); // War kick
       }
-      if (bs === 4 || bs === 12) {
-        tone(160, 0.09, 'sawtooth', 0.05, -70); // Snare
+      if (bs === 4 || bs === 12 || (isPhase2 && bs % 4 === 2)) {
+        tone(160, 0.09, 'sawtooth', 0.06, -70); // Snare
       }
       // Menacing Synth Bassline
       var bossBass = [N.D2, N.D2, N.F2, N.D2, N.G2, N.D2, N.Ab2, N.G2,
                       N.D2, N.D2, N.F2, N.G2, N.A2, N.G2, N.F2, N.E2];
-      tone(bossBass[bs], 0.1, 'sawtooth', 0.04);
+      tone(bossBass[bs], 0.1, 'sawtooth', isPhase2 ? 0.05 : 0.04);
 
       // Layer 2 (70%–35% HP): Extra Percussion & Saw Lead
-      if (hpPct <= 0.70) {
-        if (bs % 2 === 0) tone(900, 0.03, 'square', 0.015, -400); // Shaker tick
+      if (hpPct <= 0.70 || isPhase2) {
+        if (bs % 2 === 0) tone(900, 0.03, 'square', 0.018, -400); // Shaker tick
         var lead1 = [N.D4, 0, N.F4, N.G4, N.A4, 0, N.Bb4, N.A4,
                      N.G4, 0, N.A4, N.F4, N.E4, 0, N.F4, N.D4];
-        if (lead1[bs]) tone(lead1[bs], 0.12, 'sawtooth', 0.03);
+        if (lead1[bs]) tone(lead1[bs], 0.12, 'sawtooth', isPhase2 ? 0.04 : 0.03);
       }
 
       // Layer 3 (35%–10% HP): High-Intensity Double-Time Drums & Cascading Arpeggios
-      if (hpPct <= 0.35) {
+      if (hpPct <= 0.35 || (isPhase2 && hpPct <= 0.6)) {
         var arpHigh = [N.D5, N.F5, N.A5, N.G5, N.F5, N.E5, N.D5, N.C5,
                        N.D5, N.F5, N.G5, N.A5, N.Bb5, N.A5, N.F5, N.E5];
-        tone(arpHigh[bs], 0.08, 'triangle', 0.03);
+        tone(arpHigh[bs], 0.08, 'triangle', 0.035);
         if (bs === 2 || bs === 6 || bs === 10 || bs === 14) {
           tone(75, 0.08, 'triangle', 0.05, -30); // Galloping kick
         }
       }
 
       // Layer 4 (< 10% HP): Chaotic Climax Lead & Snare Rolls
-      if (hpPct <= 0.10) {
-        tone(N.D5 + Math.sin(musicStep) * 45, 0.06, 'sawtooth', 0.045);
-        if (bs % 2 === 1) tone(220, 0.05, 'sawtooth', 0.035, -90);
+      if (hpPct <= 0.15 || (isPhase2 && hpPct <= 0.35)) {
+        tone(N.D5 + Math.sin(musicStep) * 45, 0.06, 'sawtooth', 0.05);
+        if (bs % 2 === 1) tone(220, 0.05, 'sawtooth', 0.04, -90);
       }
 
       musicStep++;
@@ -672,7 +697,12 @@ kbd {
   var state = 'title';
   var t = 0, cam = { x: 0, shake: 0 };
   var player, enemies, coins, hearts, flags, projs, parts, ghosts = [], corpses = [];
-  var boss = null, bossDefeated = null;
+  var boss = null, boss2 = null, bossDefeated = null;
+  var resurrectionTimer = 0, resurrectionPhase = 0;
+  var resurrectionSkel = null;
+  var stolenHeartTrail = [];
+  var hudHeartFlash = 0;
+  var skeletonKingCheckpoint = false;
   var princess = { x: 3420, y: GROUND_Y - 26, w: 14, h: 26, anim: 0, face: -1, active: false, sparkTimer: 0 };
   var score = 0, best = 0, hitstop = 0, winTimer = 0, runTime = 0, deadT = 0;
   var checkpointX = 40, bossActive = false, minX = 0;
@@ -727,6 +757,17 @@ kbd {
       introTriggered: false, enragedTriggered: false, volleyCount: 0, chargeCd: 4.0
     };
   }
+  function mkSkeletonKing(x, y) {
+    return {
+      type: 'boss2', x: x || 3360, y: y || (GROUND_Y - 58), w: 42, h: 58, hp: 30, maxhp: 30, displayHp: 30,
+      vx: 0, vy: 0, face: -1, onGround: true, airT: 0, state: 'idle', st: 1.2, flash: 0, kb: 0, score: 2500,
+      anim: 0, wingTimer: 0, wingAngle: 0, hoverY: 0, fired: false,
+      shieldActive: false, shieldHp: 6, maxShieldHp: 6, shieldCd: 4.0, shieldTimer: 0, shieldFlash: 0,
+      chargeCd: 5.0, laserCd: 5.5, flightCd: 7.0,
+      laserState: 'none', laserTimer: 0, targetHoverY: 0, swoopT: 0, swoopStartX: 0, swoopTargetX: 0,
+      enragedTriggered: false, volleyCount: 0
+    };
+  }
 
   function buildWorld() {
     enemies = []; coins = []; hearts = []; flags = []; projs = []; parts = []; ghosts = []; corpses = [];
@@ -736,6 +777,7 @@ kbd {
     [520, 1050, 1600, 2250, 2700, 2900].forEach(function (x) { enemies.push(mkSkel(x)); });
     [[400, 110], [900, 90], [1250, 100], [1650, 90], [2000, 110], [2350, 90], [2780, 100]].forEach(function (a) { enemies.push(mkBat(a[0], a[1])); });
     boss = mkBoss();
+    boss2 = null;
     enemies.push(boss);
     floats.forEach(function (f) {
       for (var i = 0; i < 3; i++) coins.push({ x: f.x + f.w / 2 - 14 + i * 14, y: f.y - 16, got: false });
@@ -746,6 +788,12 @@ kbd {
   }
 
   function reset() {
+    skeletonKingCheckpoint = false;
+    boss2 = null;
+    resurrectionTimer = 0;
+    resurrectionPhase = 0;
+    stolenHeartTrail = [];
+    hudHeartFlash = 0;
     buildWorld();
     player = makePlayer(40);
     score = 0; runTime = 0; checkpointX = 40; bossActive = false; minX = 0; hitstop = 0; winTimer = 0;
@@ -754,22 +802,44 @@ kbd {
     playMusic('explore');
   }
   function respawn() {
-    player = makePlayer(checkpointX);
-    player.inv = 1.5; player.blink = 1.5;
-    if (boss && boss.hp > 0) {
-      var i = enemies.indexOf(boss);
-      if (i >= 0) enemies.splice(i, 1);
-      boss = mkBoss();
-      enemies.push(boss);
+    if (skeletonKingCheckpoint) {
+      player = makePlayer(3100);
+      player.maxhp = 5;
+      player.hp = 4; // Retrying Skeleton King with 4 hearts to match the stolen heart story
+      player.inv = 1.5; player.blink = 1.5;
+      enemies = enemies.filter(function (e) { return e.type !== 'boss' && e.type !== 'boss2'; });
+      boss2 = mkSkeletonKing(3360, GROUND_Y - 58);
+      boss2.st = 1.2;
+      enemies.push(boss2);
+      boss = null;
+      bossDefeated = null;
+      princess.active = false;
+      projs = [];
+      bossActive = true; minX = ARENA_MIN - 10;
+      bossIntroTimer = 0; endingTimer = 0; resurrectionTimer = 0;
+      hudHeartFlash = 0; stolenHeartTrail = [];
+      cam.x = clamp(player.x - W / 2, 0, LEVEL_W - W);
+      state = 'play';
+      playMusic('boss_phase2');
+      say('FACE THE SKELETON KING!', 2.0);
+    } else {
+      player = makePlayer(checkpointX);
+      player.inv = 1.5; player.blink = 1.5;
+      if (boss && boss.hp > 0) {
+        var i = enemies.indexOf(boss);
+        if (i >= 0) enemies.splice(i, 1);
+        boss = mkBoss();
+        enemies.push(boss);
+      }
+      bossDefeated = null;
+      princess.active = false;
+      projs = [];
+      bossActive = false; minX = 0;
+      bossIntroTimer = 0; endingTimer = 0;
+      cam.x = clamp(player.x - W / 2, 0, LEVEL_W - W);
+      state = 'play';
+      playMusic('explore');
     }
-    bossDefeated = null;
-    princess.active = false;
-    projs = [];
-    bossActive = false; minX = 0;
-    bossIntroTimer = 0; endingTimer = 0;
-    cam.x = clamp(player.x - W / 2, 0, LEVEL_W - W);
-    state = 'play';
-    playMusic('explore');
   }
   function startGame() { reset(); state = 'play'; splashTimer = 2.2; say('Naks Enters Ashen Vale', 1.8); playMusic('explore'); }
   function say(txt, d) { toast.txt = txt; toast.t = d || 1.6; }
@@ -860,6 +930,29 @@ kbd {
     return true;
   }
 
+  function initResurrectionCutscene(wx, wy, wf) {
+    if (player) {
+      player.vx = 0; player.vy = 0; player.atk = 0; player.shielding = false;
+    }
+    resurrectionTimer = 0;
+    resurrectionPhase = 0;
+    resurrectionSkel = {
+      x: Math.min(LEVEL_W - 30, (player ? player.x + 190 : 3380)),
+      y: GROUND_Y - 32,
+      w: 18,
+      h: 32,
+      face: -1,
+      hasHeart: false,
+      dissolved: false,
+      dropped: false,
+      shattered: false,
+      roared: false,
+      anim: 0
+    };
+    stolenHeartTrail = [];
+    hudHeartFlash = 0;
+  }
+
   function damageEnemy(e, d, dirx, isSpecial) {
     // Check Warden Boss Shield
     if (e.type === 'boss' && e.shieldActive && !isSpecial) {
@@ -878,6 +971,24 @@ kbd {
       return;
     }
 
+    // Check Skeleton King Bone Shield
+    if (e.type === 'boss2' && e.shieldActive && !isSpecial) {
+      e.shieldHp -= d;
+      e.shieldFlash = 0.16;
+      sfx('shield_block');
+      addSparks(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, dirx, 14, '#c084fc');
+      burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#7b2cbf', 10, 130);
+      if (e.shieldHp <= 0) {
+        e.shieldActive = false; e.shieldCd = 9.0;
+        e.state = 'stagger'; e.st = 2.2; e.flash = 0.28;
+        sfx('shield_break'); sfx('boom'); cam.shake = 10;
+        burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#dfd5bd', 24, 200);
+        burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#a855f7', 20, 180);
+        say('BONE SHIELD SHATTERED!', 1.6);
+      }
+      return;
+    }
+
     // Check Skeleton Spiked Buckler Shield Deflection
     if (e.type === 'skel' && (e.shielding || e.state === 'shield') && !isSpecial) {
       var skelFacing = (e.face > 0 && dirx < 0) || (e.face < 0 && dirx > 0);
@@ -891,11 +1002,12 @@ kbd {
     }
 
     e.hp -= d; e.flash = 0.14;
-    e.kb = e.type === 'boss' ? 0.06 : 0.2;
-    e.vx = dirx * (e.type === 'boss' ? 22 : 125);
+    var isBossType = (e.type === 'boss' || e.type === 'boss2');
+    e.kb = isBossType ? 0.06 : 0.2;
+    e.vx = dirx * (isBossType ? 20 : 125);
     if (e.type === 'bat') e.vy = -35;
     hitstop = 0.05; cam.shake = Math.max(cam.shake, 2.5);
-    addSparks(e.x + e.w / 2, e.y + e.h / 2, dirx, e.type === 'boss' ? 12 : 7);
+    addSparks(e.x + e.w / 2, e.y + e.h / 2, dirx, isBossType ? 12 : 7);
     sfx('hit');
 
     if (e.hp <= 0) {
@@ -917,13 +1029,40 @@ kbd {
         corpses.push({ type: 'skel', x: e.x, y: e.y, w: e.w, h: e.h, face: e.face, timer: 0, maxTimer: 0.6 });
       } else if (e.type === 'boss') {
         bossDefeated = { x: e.x, y: e.y, face: e.face, timer: 3.2 };
-        winTimer = 3.2; cam.shake = 16; sfx('boom'); projs = [];
+        winTimer = 0; // Don't trigger ending yet!
+        cam.shake = 16;
+        sfx('boom');
+        projs = [];
         burst(e.x + e.w / 2, e.y + e.h / 2, '#ff8a3d', 60, 260);
         burst(e.x + e.w / 2, e.y + e.h / 2, '#fff0a8', 30, 200);
+        playMusic('none'); // Beat of eerie silence!
+        state = 'resurrection';
+        resurrectionTimer = 0;
+        resurrectionPhase = 0;
+        skeletonKingCheckpoint = true;
+        initResurrectionCutscene(e.x, e.y, e.face);
+      } else if (e.type === 'boss2') {
+        bossDefeated = {
+          x: e.x, y: e.y, face: e.face, timer: 3.5,
+          isKing: true,
+          crownX: e.x + 18,
+          crownY: e.y - 12,
+          crownVy: -180,
+          crownVx: e.face * 35,
+          crownAngle: 0
+        };
+        winTimer = 3.5;
+        cam.shake = 22;
+        sfx('boom');
+        projs = [];
+        burst(e.x + e.w / 2, e.y + e.h / 2, '#dfd5bd', 50, 240);
+        burst(e.x + e.w / 2, e.y + e.h / 2, '#7b2cbf', 40, 260);
+        burst(e.x + e.w / 2, e.y + e.h / 2, '#f5c452', 30, 200);
         playMusic('victory');
+        say('THE SKELETON KING IS DEFEATED!', 2.5);
       }
 
-      if (e.type !== 'boss') {
+      if (e.type !== 'boss' && e.type !== 'boss2') {
         if (Math.random() < 0.2) hearts.push({ x: e.x + e.w / 2 - 3, y: e.y - 4, got: false });
         else coins.push({ x: e.x + e.w / 2 - 3, y: e.y - 6, got: false });
       }
@@ -1312,10 +1451,12 @@ kbd {
       }
     } else if (e.type === 'boss') {
       updateBoss(e, dt, pcx, ecx);
+    } else if (e.type === 'boss2') {
+      updateSkeletonKing(e, dt, pcx, ecx);
     }
 
     // body contact damage
-    if (!e.dead && !p.dead && (e.type !== 'boss' || (bossActive && state === 'play')) && overlap({ x: e.x + 2, y: e.y + 2, w: e.w - 4, h: e.h - 3 }, p)) {
+    if (!e.dead && !p.dead && (e.type !== 'boss' && e.type !== 'boss2' || (bossActive && state === 'play')) && overlap({ x: e.x + 2, y: e.y + 2, w: e.w - 4, h: e.h - 3 }, p)) {
       if (damagePlayer(1, ecx) && e.type === 'bat') {
         e.state = 'recover'; e.st = 0.7; e.vx = (ecx < pcx ? -1 : 1) * 80; e.vy = -50;
       }
@@ -1556,6 +1697,349 @@ kbd {
     e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
   }
 
+  function updateSkeletonKing(e, dt, pcx, ecx) {
+    if (!bossActive || state !== 'play') return;
+    var dx = pcx - ecx;
+    if (e.displayHp === undefined) e.displayHp = e.hp;
+    if (e.displayHp > e.hp) e.displayHp = Math.max(e.hp, e.displayHp - dt * 10);
+    if (e.shieldFlash > 0) e.shieldFlash -= dt;
+    if (e.chargeCd > 0) e.chargeCd -= dt;
+    if (e.laserCd > 0) e.laserCd -= dt;
+    if (e.flightCd > 0) e.flightCd -= dt;
+    e.wingTimer = (e.wingTimer || 0) + dt;
+
+    if (e.kb > 0) {
+      e.kb -= dt; e.x += e.vx * dt; e.vx *= 0.8;
+      if (e.state !== 'hover' && e.state !== 'swoop') groundPhysics(e, dt);
+      e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
+      return;
+    }
+    var enraged = e.hp <= e.maxhp / 2;
+
+    // Enrage Transformation Trigger
+    if (enraged && !e.enragedTriggered) {
+      e.enragedTriggered = true;
+      e.state = 'enrage';
+      e.st = 1.3;
+      e.vx = 0;
+      sfx('king_roar');
+      sfx('boom');
+      cam.shake = 16;
+      say('THE SKELETON KING IS ENRAGED!', 2.2);
+      burst(e.x + e.w / 2, e.y + e.h / 2, '#7b2cbf', 50, 240);
+      burst(e.x + e.w / 2, e.y + e.h / 2, '#ff0055', 40, 200);
+      burst(e.x + e.w / 2, e.y + e.h / 2, '#f5c452', 25, 170);
+      playMusic('boss_phase2');
+    }
+
+    // Bone Shield Cooldown & Activation Logic
+    if (e.shieldCd > 0) e.shieldCd -= dt;
+    if (!e.shieldActive && e.shieldCd <= 0 && e.state === 'walk') {
+      if (Math.random() < (enraged ? 0.38 : 0.25)) {
+        e.shieldActive = true;
+        e.shieldHp = 6;
+        e.shieldTimer = 5.0;
+        sfx('shield_up');
+        say('BONE SHIELD RAISED!', 1.2);
+      }
+    }
+    if (e.shieldActive) {
+      e.shieldTimer -= dt;
+      if (e.shieldTimer <= 0) {
+        e.shieldActive = false;
+        e.shieldCd = 8.0;
+      }
+    }
+
+    // Ambient Void Embers
+    if (Math.random() < (enraged ? 0.85 : 0.45)) {
+      parts.push({
+        x: ecx + rnd(-20, 20), y: e.y + rnd(0, 30),
+        vx: rnd(-25, 25), vy: rnd(-55, -15),
+        life: rnd(0.3, 0.7), max: 0.7,
+        c: Math.random() < 0.5 ? '#9d4edd' : '#ff0055',
+        s: Math.random() < 0.35 ? 2.5 : 1.5, g: -30
+      });
+    }
+
+    // Staggered State (After Bone Shield Break)
+    if (e.state === 'stagger') {
+      e.st -= dt;
+      if (e.st <= 0) { e.state = 'walk'; e.st = 1.0; }
+      groundPhysics(e, dt);
+      e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
+      return;
+    }
+
+    // Enraged Roar State
+    if (e.state === 'enrage') {
+      e.st -= dt;
+      cam.shake = Math.max(cam.shake, 4);
+      if (Math.random() < 0.6) {
+        parts.push({
+          x: ecx + rnd(-24, 24), y: e.y + e.h - 4,
+          vx: rnd(-45, 45), vy: rnd(-130, -50),
+          life: 0.45, max: 0.45,
+          c: Math.random() < 0.5 ? '#ff0055' : '#c084fc',
+          s: rnd(2, 4), g: -20
+        });
+      }
+      if (e.st <= 0) {
+        e.state = 'leap';
+        e.vy = -390;
+        e.vx = clamp(dx * 0.9, -170, 170);
+        e.onGround = false;
+        e.airT = 0;
+      }
+      groundPhysics(e, dt);
+      e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
+      return;
+    }
+
+    e.st -= dt;
+    if (e.state !== 'leap' && e.state !== 'swing' && e.state !== 'charge' && e.state !== 'swoop') {
+      e.face = dx >= 0 ? 1 : -1;
+    }
+
+    // State 1: Idle
+    if (e.state === 'idle') {
+      if (e.st <= 0) { e.state = 'walk'; e.st = 1.0; }
+    }
+    // State 2: Walk
+    else if (e.state === 'walk') {
+      var moveSpd = enraged ? 68 : 50;
+      if (e.shieldActive) moveSpd *= 0.65;
+      e.x += e.face * moveSpd * dt;
+
+      if (e.st <= 0) {
+        var r = Math.random();
+        var dist = Math.abs(dx);
+        // 1. Telegraphed Void Laser Attack
+        if (dist > 70 && e.laserCd <= 0 && r < (enraged ? 0.5 : 0.35)) {
+          e.state = 'laser';
+          e.laserState = 'telegraph';
+          e.laserTimer = 0.6;
+          e.laserCd = enraged ? 4.5 : 6.0;
+          e.st = 1.1;
+          sfx('laser_charge');
+        }
+        // 2. Wing Flight & Swoop Attack
+        else if (e.flightCd <= 0 && r < (enraged ? 0.45 : 0.35)) {
+          e.state = 'hover';
+          e.st = 2.4;
+          e.vy = -260;
+          e.targetHoverY = GROUND_Y - 95;
+          e.flightCd = 7.5;
+          e.gustTimer = 0;
+          sfx('wing_flap');
+        }
+        // 3. Shield Charge Bull Rush
+        else if (e.shieldActive && dist > 65 && e.chargeCd <= 0 && r < 0.45) {
+          e.state = 'charge';
+          e.st = 0.85;
+          e.chargeCd = 6.5;
+          sfx('dash');
+          say('SKELETON KING BONE CHARGE!', 1.0);
+        }
+        // 4. Aerial Ground Slam Leap
+        else if (dist > 140 || (r < 0.3 && dist > 80)) {
+          e.state = 'leap';
+          e.vy = enraged ? -380 : -340;
+          e.vx = clamp(dx * 0.85, -170, 170);
+          e.onGround = false;
+          e.airT = 0;
+          addDust(e.x + 16, GROUND_Y, -e.face, 8);
+          sfx('dash');
+        }
+        // 5. Fireball / Hellfire Volley
+        else if ((enraged && r < 0.7) || (!enraged && r < 0.5 && dist > 50)) {
+          e.state = 'volley';
+          e.st = 0.72;
+          e.fired = false;
+          e.volleyCount = 1;
+        }
+        // 6. Heavy Greatsword Cleave
+        else {
+          e.state = 'swing';
+          e.st = enraged ? 0.52 : 0.62;
+          e.fired = false;
+          e.face = dx >= 0 ? 1 : -1;
+        }
+      }
+    }
+    // State 3: Laser Attack (0.6s telegraph + 0.38s beam)
+    else if (e.state === 'laser') {
+      e.laserTimer -= dt;
+      if (e.laserState === 'telegraph') {
+        if (Math.random() < 0.6) {
+          parts.push({
+            x: ecx + e.face * 10 + rnd(-4, 4), y: e.y + 14 + rnd(-4, 4),
+            vx: -e.face * rnd(10, 30), vy: rnd(-10, 10),
+            life: 0.2, max: 0.2, c: '#ff0055', s: 2, g: 0
+          });
+        }
+        if (e.laserTimer <= 0) {
+          e.laserState = 'beam';
+          e.laserTimer = 0.38;
+          sfx('laser_fire');
+          cam.shake = 10;
+        }
+      } else if (e.laserState === 'beam') {
+        cam.shake = Math.max(cam.shake, 4);
+        var beamY = e.y + 10;
+        var bMinX = e.face > 0 ? ecx + 8 : ARENA_MIN + 4;
+        var bMaxX = e.face > 0 ? (LEVEL_W - 10) : ecx - 8;
+        var bBox = { x: bMinX, y: beamY - 7, w: Math.max(10, bMaxX - bMinX), h: 16 };
+        if (!player.dead && overlap(bBox, player)) {
+          damagePlayer(1, ecx);
+        }
+        if (Math.random() < 0.7) {
+          parts.push({
+            x: rnd(bMinX, bMaxX), y: beamY + rnd(-5, 5),
+            vx: rnd(-20, 20), vy: rnd(-25, 10),
+            life: 0.25, max: 0.25, c: Math.random() < 0.5 ? '#ff0055' : '#ffffff', s: 2, g: 0
+          });
+        }
+        if (e.laserTimer <= 0) {
+          e.laserState = 'none';
+          e.state = 'walk';
+          e.st = 0.9;
+        }
+      }
+    }
+    // State 4: Wing Hover & Wing Gust
+    else if (e.state === 'hover') {
+      e.y += (e.targetHoverY - e.y) * Math.min(1, dt * 5);
+      e.vx = e.face * 35;
+      e.x += e.vx * dt;
+      // Wing Gust pushing Hero back
+      e.gustTimer += dt;
+      if (Math.abs(dx) < 220) {
+        player.vx -= e.face * 130 * dt;
+        if (Math.random() < 0.4) {
+          parts.push({
+            x: ecx + e.face * rnd(10, 40), y: e.y + 20 + rnd(-10, 10),
+            vx: e.face * rnd(120, 220), vy: rnd(-10, 10),
+            life: 0.3, max: 0.3, c: '#c084fc', s: 2, g: 0
+          });
+        }
+      }
+      if (e.st <= 1.1) {
+        // Transition to Swoop Dive
+        e.state = 'swoop';
+        e.swoopT = 0;
+        e.swoopStartX = e.x;
+        e.swoopTargetX = clamp(pcx + e.face * 70, ARENA_MIN + 25, LEVEL_W - 65);
+        sfx('wing_flap');
+      }
+    }
+    // State 5: Swoop Dive Attack
+    else if (e.state === 'swoop') {
+      e.swoopT += dt * 1.6;
+      var prog = clamp(e.swoopT, 0, 1);
+      e.x = (1 - prog) * e.swoopStartX + prog * e.swoopTargetX;
+      e.y = (GROUND_Y - 95) + Math.sin(prog * Math.PI) * 75;
+      if (prog > 0.3 && prog < 0.7) {
+        var sBox = { x: e.x + 4, y: e.y + 12, w: e.w - 8, h: e.h - 14 };
+        if (overlap(sBox, player)) {
+          damagePlayer(1, ecx);
+        }
+      }
+      if (prog >= 1) {
+        e.y = GROUND_Y - e.h;
+        e.onGround = true;
+        e.state = 'walk';
+        e.st = 1.0;
+        addDust(e.x + 14, GROUND_Y, -e.face, 6);
+      }
+    }
+    // State 6: Shield Charge
+    else if (e.state === 'charge') {
+      e.x += e.face * (enraged ? 120 : 100) * dt;
+      if (Math.random() < 0.5) addDust(e.x + (e.face > 0 ? e.w : 0), GROUND_Y, -e.face, 2);
+      var chb = { x: e.face > 0 ? e.x + e.w - 8 : e.x - 16, y: e.y + 10, w: 26, h: e.h - 14 };
+      if (overlap(chb, player)) damagePlayer(1, ecx);
+      if (e.st <= 0) { e.state = 'swing'; e.st = 0.45; e.fired = false; }
+    }
+    // State 7: Leap Slam & Shockwaves
+    else if (e.state === 'leap') {
+      e.airT += dt; e.x += e.vx * dt;
+      if (e.onGround && e.airT > 0.15) {
+        e.state = 'walk';
+        e.st = enraged ? 0.8 : 1.2;
+        e.vx = 0;
+        cam.shake = 14;
+        sfx('boom');
+        // Double earthquake shockwaves
+        projs.push({ type: 'wave', x: e.x + e.w / 2 - 8, y: GROUND_Y - 14, w: 14, h: 14, vx: -160, vy: 0, life: 2.8 });
+        projs.push({ type: 'wave', x: e.x + e.w / 2 - 8, y: GROUND_Y - 14, w: 14, h: 14, vx: 160, vy: 0, life: 2.8 });
+        burst(e.x + 14, GROUND_Y, '#dfd5bd', 24, 150, 80);
+        burst(e.x + 14, GROUND_Y, '#ff0055', 20, 170, 90);
+        burst(e.x + 14, GROUND_Y, '#7b2cbf', 16, 210, 100);
+      }
+    }
+    // State 8: Fireball / Hellfire Volley
+    else if (e.state === 'volley') {
+      if (e.st <= 0.28 && !e.fired) {
+        e.fired = true;
+        cam.shake = 6;
+        sfx('boom');
+        var ang = Math.atan2((player.y + 8) - (e.y + 12), dx);
+        var count = enraged ? 5 : 3;
+        var spread = enraged ? 0.22 : 0.26;
+        for (var i = 0; i < count; i++) {
+          var a = ang + (i - (count - 1) / 2) * spread;
+          projs.push({
+            type: 'fire',
+            x: ecx - 4 + e.face * 18,
+            y: e.y + 14,
+            w: 8, h: 8,
+            vx: Math.cos(a) * (enraged ? 140 : 120),
+            vy: Math.sin(a) * (enraged ? 140 : 120),
+            life: 3.2
+          });
+        }
+        burst(ecx + e.face * 20, e.y + 14, '#ff0055', 10, 110);
+      }
+      if (e.st <= 0) {
+        if (enraged && e.volleyCount === 1) {
+          e.volleyCount = 2; e.st = 0.42; e.fired = false;
+        } else {
+          e.state = 'walk'; e.st = enraged ? 0.7 : 1.1;
+        }
+      }
+    }
+    // State 9: Abyssal Greatsword Cleave
+    else if (e.state === 'swing') {
+      if (e.st <= 0.32 && e.st > 0.08) {
+        if (!e.fired) {
+          e.fired = true;
+          sfx('slash3');
+          cam.shake = Math.max(cam.shake, 5);
+        }
+        e.x += e.face * 60 * dt;
+        var hb = {
+          x: e.face > 0 ? e.x + e.w - 6 : e.x - 52,
+          y: e.y + 8,
+          w: 56,
+          h: 36
+        };
+        if (overlap(hb, player)) {
+          damagePlayer(1, ecx);
+        }
+      }
+      if (e.st <= 0) {
+        e.state = 'walk';
+        e.st = enraged ? 0.6 : 0.9;
+      }
+    }
+
+    if (e.state !== 'hover' && e.state !== 'swoop') {
+      groundPhysics(e, dt);
+    }
+    e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
+  }
+
   /* ---------- main update loop ---------- */
   function update(dt) {
     t += dt;
@@ -1589,6 +2073,182 @@ kbd {
     if (state === 'dead') {
       stepParticles(dt);
       if (edge.start) respawn();
+      return;
+    }
+    if (state === 'resurrection') {
+      resurrectionTimer += dt;
+      stepParticles(dt);
+      if (hudHeartFlash > 0) hudHeartFlash -= dt;
+
+      // Hero remains frozen in awe
+      if (player) {
+        player.vx = 0; player.vy = 0; player.atk = 0; player.shielding = false;
+        player.face = 1;
+      }
+
+      var wx = (bossDefeated && bossDefeated.x) || 3380;
+      var wy = (bossDefeated && bossDefeated.y) || (GROUND_Y - 52);
+      var sk = resurrectionSkel;
+
+      // Allow skipping cutscene on key press
+      if (edge.start || edge.jump || edge.attack) {
+        if (player && player.hp > 1) {
+          player.hp -= 1;
+        }
+        resurrectionTimer = 5.2;
+      }
+
+      // Phase 0: 0.0s - 0.5s: Ominous Silence & Camera centering
+      if (resurrectionTimer < 0.5) {
+        var targetCam = wx - W / 2 + 10;
+        cam.x += (targetCam - cam.x) * Math.min(1, dt * 5);
+        if (Math.random() < 0.3) {
+          parts.push({
+            x: wx + 18 + rnd(-16, 16), y: wy + 40,
+            vx: rnd(-10, 10), vy: rnd(-30, -10),
+            life: 0.5, max: 0.5,
+            c: '#3b2244', s: 2, g: -10
+          });
+        }
+      }
+      // Phase 1: 0.5s - 1.8s: Dark Skeleton approaches Hero
+      else if (resurrectionTimer >= 0.5 && resurrectionTimer < 1.8) {
+        if (sk) {
+          var heroTargetX = player.x + 28;
+          if (sk.x > heroTargetX) {
+            sk.x -= 125 * dt;
+            sk.face = -1;
+            sk.anim += dt;
+          }
+          // Camera smooth frame between hero and skeleton
+          var targetCam = (player.x + sk.x) / 2 - W / 2;
+          cam.x += (targetCam - cam.x) * Math.min(1, dt * 6);
+
+          // Purple aura particles around dark minion
+          if (Math.random() < 0.5) {
+            parts.push({
+              x: sk.x + sk.w / 2 + rnd(-6, 6), y: sk.y + rnd(4, sk.h),
+              vx: rnd(-15, 15), vy: rnd(-25, -5),
+              life: 0.4, max: 0.4,
+              c: Math.random() < 0.5 ? '#7b2cbf' : '#3c096c', s: 2, g: -10
+            });
+          }
+        }
+      }
+      // Phase 2: 1.8s - 2.8s: Stealing the Heart
+      else if (resurrectionTimer >= 1.8 && resurrectionTimer < 2.8) {
+        if (sk) {
+          if (!sk.hasHeart && resurrectionTimer >= 1.9) {
+            sk.hasHeart = true;
+            if (player.hp > 1) {
+              player.hp = Math.max(1, player.hp - 1);
+              hudHeartFlash = 2.0;
+              sfx('heart_steal');
+              cam.shake = 6;
+              say('A HEART WAS STOLEN!', 1.6);
+              player.hurt = 0.3;
+            }
+          }
+          // Floating heart animation from player's chest to skeleton's hands
+          var prog = clamp((resurrectionTimer - 1.9) / 0.7, 0, 1);
+          var heartX = (1 - prog) * (player.x + 8) + prog * (sk.x + 2);
+          var heartY = (1 - prog) * (player.y + 10) + prog * (sk.y + 12) - Math.sin(prog * Math.PI) * 16;
+          stolenHeartTrail.push({ x: heartX, y: heartY, life: 0.35, max: 0.35 });
+
+          // Red/gold extraction sparks
+          if (Math.random() < 0.6) {
+            parts.push({
+              x: heartX + rnd(-4, 4), y: heartY + rnd(-4, 4),
+              vx: rnd(-20, 20), vy: rnd(-20, 20),
+              life: 0.3, max: 0.3,
+              c: Math.random() < 0.6 ? '#ff2a55' : '#ffd166', s: 2, g: 0
+            });
+          }
+        }
+      }
+      // Phase 3: 2.8s - 3.8s: Skeleton carries Heart to Warden
+      else if (resurrectionTimer >= 2.8 && resurrectionTimer < 3.8) {
+        var wardenChestX = wx + 18;
+        if (sk) {
+          if (sk.x < wardenChestX - 6) {
+            sk.x += 160 * dt;
+            sk.face = 1;
+            sk.anim += dt;
+          } else {
+            // Skeleton drops heart on Warden!
+            if (!sk.dropped) {
+              sk.dropped = true;
+              sfx('boom');
+              sfx('boss_intro');
+              cam.shake = 16;
+              say('FORBIDDEN SOUL RESURRECTION!', 2.0);
+              // Skeleton dissolves into bone dust
+              sk.dissolved = true;
+              burst(sk.x + 9, sk.y + 16, '#dfd5bd', 30, 180);
+              burst(sk.x + 9, sk.y + 16, '#7b2cbf', 25, 200);
+              burst(wardenChestX, wy + 20, '#ff3b00', 40, 220);
+              burst(wardenChestX, wy + 20, '#ffd166', 30, 180);
+            }
+          }
+        }
+        var targetCam = wx - W / 2;
+        cam.x += (targetCam - cam.x) * Math.min(1, dt * 6);
+      }
+      // Phase 4: 3.8s - 5.2s: Armor Shatters & Skeleton King Awakens
+      else if (resurrectionTimer >= 3.8 && resurrectionTimer < 5.2) {
+        var targetCam = wx - W / 2;
+        cam.x += (targetCam - cam.x) * Math.min(1, dt * 6);
+
+        if (resurrectionTimer < 4.2) {
+          cam.shake = Math.max(cam.shake, 4);
+          if (Math.random() < 0.5) {
+            parts.push({
+              x: wx + 18 + rnd(-16, 16), y: wy + 24 + rnd(-10, 10),
+              vx: rnd(-25, 25), vy: rnd(-50, -20),
+              life: 0.4, max: 0.4,
+              c: '#ff3b00', s: 2.5, g: -15
+            });
+          }
+        } else if (resurrectionTimer >= 4.2 && sk && !sk.shattered) {
+          sk.shattered = true;
+          sfx('shield_break');
+          sfx('boom');
+          cam.shake = 22;
+          // Flying armor chunks:
+          for (var ap = 0; ap < 24; ap++) {
+            var ang = rnd(0, Math.PI * 2), sp = rnd(120, 260);
+            parts.push({
+              x: wx + 18, y: wy + 26,
+              vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 80,
+              life: rnd(0.8, 1.4), max: 1.4,
+              c: ap % 3 === 0 ? '#495057' : (ap % 3 === 1 ? '#adb5bd' : '#f5c452'),
+              s: rnd(3, 5), g: 450
+            });
+          }
+        } else if (resurrectionTimer >= 4.6 && sk && !sk.roared) {
+          sk.roared = true;
+          sfx('king_roar');
+          cam.shake = 20;
+          say('THE SKELETON KING!', 2.2);
+        }
+      }
+      // Phase 5: 5.2s+: Battle begins!
+      else {
+        bossDefeated = null;
+        boss2 = mkSkeletonKing(wx, GROUND_Y - 58);
+        enemies = enemies.filter(function (e) { return e.type !== 'boss' && e.type !== 'boss2'; });
+        enemies.push(boss2);
+        boss = null;
+        bossActive = true;
+        minX = ARENA_MIN - 10;
+        state = 'play';
+        playMusic('boss_phase2');
+        sfx('boom');
+      }
+
+      // Step stolen heart trail
+      for (var hi = 0; hi < stolenHeartTrail.length; hi++) stolenHeartTrail[hi].life -= dt;
+      stolenHeartTrail = stolenHeartTrail.filter(function (h) { return h.life > 0; });
       return;
     }
     if (state === 'ending') {
@@ -1680,7 +2340,7 @@ kbd {
     for (var j = 0; j < enemies.length; j++) {
       var e = enemies[j];
       if (e.dead) continue;
-      if (Math.abs((e.x + e.w / 2) - (p.x + p.w / 2)) > 420 && e.type !== 'boss') continue;
+      if (Math.abs((e.x + e.w / 2) - (p.x + p.w / 2)) > 420 && e.type !== 'boss' && e.type !== 'boss2') continue;
       updateEnemy(e, dt);
     }
     enemies = enemies.filter(function (e) { return !e.dead; });
@@ -1706,6 +2366,20 @@ kbd {
             break;
           }
         }
+      } else if (pr.type === 'wave') {
+        pr.y = GROUND_Y - 14;
+        if (Math.random() < 0.5) {
+          parts.push({
+            x: pr.x + pr.w / 2, y: GROUND_Y - rnd(2, 8),
+            vx: -Math.sign(pr.vx) * rnd(15, 35), vy: rnd(-40, -15),
+            life: 0.3, max: 0.3,
+            c: Math.random() < 0.5 ? '#ff7d33' : '#d8c9b0', s: 2, g: 120
+          });
+        }
+        if (!p.dead && overlap(pr, p)) {
+          if (damagePlayer(1, pr.x + pr.w / 2)) pr.life = 0;
+        }
+        if (pr.x < ARENA_MIN - 30 || pr.x > LEVEL_W + 10) pr.life = 0;
       }
     }
     projs = projs.filter(function (q) { return q.life > 0; });
@@ -1756,8 +2430,36 @@ kbd {
       winTimer -= dt;
       if (bossDefeated) {
         bossDefeated.timer -= dt;
-        if (Math.random() < 0.4) {
-          burst(bossDefeated.x + 14 + rnd(-10, 10), bossDefeated.y + 20 + rnd(-10, 10), '#f5c452', 2, 80, -20);
+        if (bossDefeated.isKing) {
+          bossDefeated.crownVy += 520 * dt;
+          bossDefeated.crownY += bossDefeated.crownVy * dt;
+          bossDefeated.crownX = (bossDefeated.crownX !== undefined ? bossDefeated.crownX : (bossDefeated.x + 18)) + (bossDefeated.crownVx || 0) * dt;
+          bossDefeated.crownAngle = (bossDefeated.crownAngle || 0) + (bossDefeated.crownVx > 0 ? 5 : -5) * dt;
+          if (bossDefeated.crownY >= GROUND_Y - 8) {
+            bossDefeated.crownY = GROUND_Y - 8;
+            if (Math.abs(bossDefeated.crownVy) > 35) {
+              bossDefeated.crownVy = -bossDefeated.crownVy * 0.45;
+              bossDefeated.crownVx *= 0.7;
+              sfx('clink');
+            } else {
+              bossDefeated.crownVy = 0;
+              bossDefeated.crownVx = 0;
+            }
+          }
+          if (Math.random() < 0.45) {
+            parts.push({
+              x: bossDefeated.x + rnd(-10, 30),
+              y: bossDefeated.y + rnd(0, 40),
+              vx: rnd(-25, 25), vy: rnd(-45, -15),
+              life: 0.6, max: 0.6,
+              c: Math.random() < 0.5 ? '#dfd5bd' : '#a855f7',
+              s: rnd(1.5, 3), g: -10
+            });
+          }
+        } else {
+          if (Math.random() < 0.4) {
+            burst(bossDefeated.x + 14 + rnd(-10, 10), bossDefeated.y + 20 + rnd(-10, 10), '#f5c452', 2, 80, -20);
+          }
         }
       }
       if (winTimer <= 0) {
@@ -2193,6 +2895,10 @@ kbd {
       drawBossEntity(e, x, y);
       return;
     }
+    if (e.type === 'boss2') {
+      drawSkeletonKing(e, x, y);
+      return;
+    }
 
     var atlas = ATLAS_DATA.enemies;
     if (!atlas) return;
@@ -2489,6 +3195,384 @@ kbd {
     ctx.restore();
   }
 
+  /* =========================================================
+     4. THE SKELETON KING — PROCEDURAL BOSS (STAGE 2)
+     ========================================================= */
+  function drawSkeletonKing(e, x, y) {
+    var enraged = e.hp <= e.maxhp / 2;
+    var bobY = 0;
+    var tilt = 0;
+    var jawOpen = 0;
+    var wingFlap = Math.sin((e.wingTimer || 0) * (e.state === 'hover' || e.state === 'swoop' ? 14 : 7));
+
+    if (e.state === 'hover' || e.state === 'swoop') {
+      bobY = Math.sin((e.wingTimer || 0) * 10) * 3;
+    } else if (e.state === 'walk') {
+      bobY = Math.sin((e.anim || 0) * 8) * 1.5;
+      tilt = (e.face > 0 ? 0.04 : -0.04);
+    } else if (e.state === 'swing') {
+      tilt = e.st < 0.25 ? 0.1 : -0.08;
+      jawOpen = e.st < 0.3 ? 3 : 0;
+    } else if (e.state === 'charge') {
+      tilt = 0.12;
+      jawOpen = 2;
+    } else if (e.state === 'laser') {
+      jawOpen = e.laserState === 'beam' ? 4 : 2;
+    } else if (e.state === 'stagger') {
+      bobY = Math.sin(t * 24) * 2;
+      tilt = Math.sin(t * 18) * 0.06;
+      jawOpen = 3;
+    } else if (e.state === 'enrage') {
+      jawOpen = 4;
+      tilt = Math.sin(t * 20) * 0.04;
+    }
+
+    ctx.save();
+    // Anchor at feet center
+    ctx.translate(x + Math.round(e.w / 2), y + e.h + bobY);
+    ctx.scale(e.face, 1);
+    ctx.rotate(tilt);
+
+    // Glowing void aura
+    if (enraged) {
+      ctx.shadowColor = '#d90429';
+      ctx.shadowBlur = 16 + Math.sin(t * 8) * 6;
+    } else {
+      ctx.shadowColor = '#7b2cbf';
+      ctx.shadowBlur = 10 + Math.sin(t * 4) * 4;
+    }
+
+    // 1. Bat / Bone Wings (Drawn behind body)
+    drawKingWing(-4, -36, -1, wingFlap, enraged);
+    drawKingWing(4, -36, 1, wingFlap, enraged);
+
+    // 2. Tattered Royal Cape
+    ctx.fillStyle = '#3a0814';
+    ctx.beginPath();
+    ctx.moveTo(-6, -34);
+    ctx.lineTo(-14 + Math.sin(t * 4) * 3, -10);
+    ctx.lineTo(-8 + Math.sin(t * 5) * 4, -4);
+    ctx.lineTo(-2, -32);
+    ctx.closePath();
+    ctx.fill();
+
+    // 3. Skeletal Legs & Talon Feet
+    // Left Leg
+    R(-12, -22, 5, 12, '#dfd5bd'); // femur
+    R(-11, -12, 4, 10, '#c6b89e'); // tibia
+    R(-14, -2, 8, 3, '#9e8e7c');  // bone foot talons
+    // Right Leg
+    R(4, -22, 5, 12, '#dfd5bd');
+    R(5, -12, 4, 10, '#c6b89e');
+    R(3, -2, 8, 3, '#9e8e7c');
+    // Spiked Knee Armor
+    R(-13, -13, 6, 4, '#d4af37');
+    R(4, -13, 6, 4, '#d4af37');
+
+    // 4. Pelvis & Spine
+    R(-8, -26, 16, 5, '#dfd5bd');
+    R(-3, -36, 6, 10, '#c6b89e');
+
+    // 5. Ribcage & Pulsing Stolen Soul Core
+    R(-13, -40, 26, 14, '#e8dfd3');
+    // Rib gaps
+    R(-10, -38, 20, 2, '#2b1b17');
+    R(-11, -34, 22, 2, '#2b1b17');
+    R(-9, -30, 18, 2, '#2b1b17');
+
+    // Stolen Soul Core (Glowing Red/Gold Heart inside ribs)
+    R(-4, -36, 8, 8, '#780016');
+    R(-3, -35, 6, 6, '#ff0055');
+    R(-2, -34, 4, 4, '#ffd166');
+    R(-1, -33, 2, 2, '#ffffff');
+
+    // 6. Armored Shoulders / Spiked Pauldrons
+    R(-17, -44, 9, 7, '#d4af37');
+    R(-18, -46, 4, 4, '#f5c452');
+    R(8, -44, 9, 7, '#d4af37');
+    R(14, -46, 4, 4, '#f5c452');
+
+    // 7. Arms & Weapons
+    // Left Arm (Holding Bone Shield or fist)
+    R(-15, -37, 5, 12, '#dfd5bd');
+    R(-16, -26, 6, 8, '#c6b89e');
+
+    // Spectral Bone Shield (if active)
+    if (e.shieldActive) {
+      ctx.save();
+      ctx.shadowColor = e.shieldFlash > 0 ? '#ffffff' : '#c084fc';
+      ctx.shadowBlur = e.shieldFlash > 0 ? 20 : 12;
+      R(10, -42, 14, 28, '#2d1537');
+      R(12, -40, 10, 24, '#581c87');
+      R(14, -36, 6, 16, '#dfd5bd');
+      R(23, -44, 3, 5, '#dfd5bd');
+      R(23, -16, 3, 5, '#dfd5bd');
+      ctx.restore();
+    }
+
+    // Right Arm & Abyssal Bone Greatsword
+    var swordAngle = 0;
+    if (e.state === 'swing') {
+      var sProg = clamp(1 - (e.st / (enraged ? 0.52 : 0.62)), 0, 1);
+      swordAngle = -0.8 + sProg * 2.4;
+    } else if (e.state === 'charge') {
+      swordAngle = 1.2;
+    } else {
+      swordAngle = 0.2 + Math.sin(t * 3) * 0.08;
+    }
+
+    ctx.save();
+    ctx.translate(10, -36);
+    ctx.rotate(swordAngle);
+    // Bony arm
+    R(-2, 0, 5, 12, '#dfd5bd');
+    // Golden crossguard
+    R(-8, 12, 17, 4, '#d4af37');
+    // Bone Greatsword Blade
+    R(-3, 16, 7, 34, '#eae0d5');
+    // Dark core groove
+    R(-1, 16, 3, 30, '#1c1917');
+    // Glowing red runes
+    R(0, 20, 1, 22, enraged ? '#ff0055' : '#ff4d66');
+    // Serrated bone teeth
+    for (var bi = 0; bi < 4; bi++) {
+      R(4, 18 + bi * 7, 3, 3, '#eae0d5');
+      R(-5, 18 + bi * 7, 3, 3, '#eae0d5');
+    }
+    // Tip
+    R(-2, 50, 5, 4, '#eae0d5');
+    R(-1, 54, 3, 3, '#eae0d5');
+    ctx.restore();
+
+    // 8. Crowned Giant Skull
+    // Head base & skull
+    R(-9, -58, 18, 16, '#f0ece1');
+    R(-8, -59, 16, 2, '#dfd5bd');
+    // Dark Eye Sockets
+    R(-7, -52, 5, 6, '#170c1e');
+    R(2, -52, 5, 6, '#170c1e');
+    // Crimson Blazing Eyes
+    R(-5, -50, 3, 3, '#ff0055');
+    R(-4, -49, 1, 1, '#ffffff');
+    R(4, -50, 3, 3, '#ff0055');
+    R(5, -49, 1, 1, '#ffffff');
+
+    // Eye wisps
+    if (Math.random() < 0.5) {
+      parts.push({
+        x: e.x + e.w / 2 + e.face * 6,
+        y: e.y + e.h - 50 + bobY,
+        vx: -e.face * rnd(10, 30), vy: rnd(-20, -5),
+        life: 0.25, max: 0.25,
+        c: '#ff0055', s: 1.5, g: -10
+      });
+    }
+
+    // Nasal cavity
+    R(-2, -45, 4, 3, '#2a1a15');
+
+    // Jaw (drops open when roaring / laser)
+    R(-7, -42 + jawOpen, 14, 4, '#dfd5bd');
+    // Teeth
+    for (var ti = 0; ti < 4; ti++) {
+      R(-5 + ti * 3, -43, 2, 2, '#ffffff');
+      R(-5 + ti * 3, -42 + jawOpen, 2, 2, '#ffffff');
+    }
+
+    // 9. The Ancient Spiked Crown
+    R(-10, -61, 20, 4, '#d4af37');
+    R(-9, -60, 18, 2, '#f5c452');
+    // 5 Spikes
+    R(-9, -66, 3, 5, '#f5c452');
+    R(-4, -64, 3, 3, '#f5c452');
+    R(-2, -69, 4, 8, '#ffe066'); // Tall Center Spike
+    R(2, -64, 3, 3, '#f5c452');
+    R(6, -66, 3, 5, '#f5c452');
+    // Center Ruby Gem in Crown
+    R(-1, -61, 3, 3, '#ff0055');
+    R(0, -60, 1, 1, '#ffffff');
+
+    // 10. Laser Telegraph or Active Beam
+    if (e.laserState === 'telegraph') {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 30, 80, 0.75)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(8, -50);
+      ctx.lineTo(600, -50);
+      ctx.stroke();
+      // Charging energy glow on skull
+      ctx.fillStyle = '#ff0055';
+      ctx.beginPath();
+      ctx.arc(8, -50, 4 + Math.sin(t * 30) * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (e.laserState === 'beam') {
+      ctx.save();
+      // Outer crimson aura
+      ctx.strokeStyle = 'rgba(255, 0, 70, 0.45)';
+      ctx.lineWidth = 14;
+      ctx.beginPath();
+      ctx.moveTo(8, -50);
+      ctx.lineTo(600, -50);
+      ctx.stroke();
+      // Core beam
+      ctx.strokeStyle = '#ff0055';
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(8, -50);
+      ctx.lineTo(600, -50);
+      ctx.stroke();
+      // White interior
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(8, -50);
+      ctx.lineTo(600, -50);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
+  function drawKingWing(rootX, rootY, side, flap, enraged) {
+    ctx.save();
+    ctx.translate(rootX, rootY);
+    ctx.scale(side, 1);
+    var angle = flap * 0.35 + (side > 0 ? 0.1 : -0.1);
+    ctx.rotate(angle);
+
+    // Bone spars
+    var elbowX = 24, elbowY = -24 + flap * 12;
+    var tip1X = 42, tip1Y = -20 + flap * 16;
+    var tip2X = 38, tip2Y = 6 + flap * 14;
+    var tip3X = 26, tip3Y = 22 + flap * 10;
+
+    // Tattered Webbed Membrane
+    ctx.fillStyle = enraged ? '#3d0a1e' : '#1f132b';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(elbowX, elbowY);
+    ctx.lineTo(tip1X, tip1Y);
+    ctx.quadraticCurveTo(tip1X - 6, tip1Y + 12, tip2X, tip2Y);
+    ctx.quadraticCurveTo(tip2X - 6, tip2Y + 8, tip3X, tip3Y);
+    ctx.quadraticCurveTo(tip3X - 10, tip3Y - 6, 0, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // Membrane vein ribs
+    ctx.strokeStyle = '#4a2558';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(elbowX, elbowY);
+    ctx.lineTo(tip1X, tip1Y);
+    ctx.moveTo(elbowX, elbowY);
+    ctx.lineTo(tip2X, tip2Y);
+    ctx.moveTo(elbowX, elbowY);
+    ctx.lineTo(tip3X, tip3Y);
+    ctx.stroke();
+
+    // Thick main bone spar
+    ctx.strokeStyle = '#eae0d5';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(elbowX, elbowY);
+    ctx.lineTo(tip1X, tip1Y);
+    ctx.stroke();
+
+    // Elbow claw spike
+    R(elbowX - 2, elbowY - 4, 4, 4, '#c6b89e');
+
+    ctx.restore();
+  }
+
+  function drawResurrectionCutscene(camX) {
+    var wx = (bossDefeated && bossDefeated.x) || 3380;
+    var wy = (bossDefeated && bossDefeated.y) || (GROUND_Y - 52);
+
+    // 1. Fallen Warden / Transforming Body
+    if (resurrectionTimer < 4.2) {
+      var levY = (resurrectionTimer >= 3.6) ? -Math.sin((resurrectionTimer - 3.6) / 0.6 * Math.PI) * 12 : 0;
+      drawBossDefeat({ x: wx, y: wy + levY, face: 1, timer: 1.0 }, camX);
+
+      // Light beams shooting through armor cracks right before shatter
+      if (resurrectionTimer >= 3.8 && resurrectionTimer < 4.2) {
+        var flashAlpha = (resurrectionTimer - 3.8) / 0.4;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 50, 80, ' + flashAlpha + ')';
+        ctx.lineWidth = 2;
+        for (var li = 0; li < 6; li++) {
+          var lx = wx - camX + 18 + Math.cos(li * 1.1) * 16;
+          var ly = wy + levY + 26 + Math.sin(li * 1.1) * 16;
+          ctx.beginPath();
+          ctx.moveTo(wx - camX + 18, wy + levY + 26);
+          ctx.lineTo(lx, ly);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    } else {
+      // 2. Emerging Skeleton King (rising from smoke & roaring)
+      var riseY = wy - 6 - Math.min(10, (resurrectionTimer - 4.2) * 10);
+      drawSkeletonKing({
+        x: wx, y: riseY, w: 42, h: 58, face: -1, hp: 30, maxhp: 30,
+        state: resurrectionTimer >= 4.6 ? 'enrage' : 'idle',
+        anim: resurrectionTimer, wingTimer: resurrectionTimer * 2,
+        wingAngle: 0
+      }, Math.round(wx - camX), Math.round(riseY));
+    }
+
+    // 3. Dark Cloaked Skeleton Minion
+    var sk = resurrectionSkel;
+    if (sk && !sk.dissolved) {
+      var sx = Math.round(sk.x - camX), sy = Math.round(sk.y);
+      var atlas = ATLAS_DATA.enemies;
+      if (atlas) {
+        var wIdx = Math.floor(sk.anim * 6) % 3;
+        var frName = (sk.hasHeart && resurrectionTimer < 2.8) ? 'skel_atk_0' : ('skel_walk_' + wIdx);
+        var fr = atlas[frName] || atlas['skel_idle_0'];
+        var SCALE = 0.34;
+
+        ctx.save();
+        ctx.translate(sx + Math.round(sk.w / 2), sy + sk.h);
+        ctx.scale(sk.face * SCALE, SCALE);
+        ctx.shadowColor = '#9d4edd';
+        ctx.shadowBlur = 14;
+
+        ctx.drawImage(ENEMY_IMG, fr.x, fr.y, fr.w, fr.h, -Math.round(fr.ox), -Math.round(fr.oy), fr.w, fr.h);
+        ctx.restore();
+
+        // Carried Stolen Heart in Hand
+        if (sk.hasHeart && !sk.dropped) {
+          var hHandX = sx + (sk.face > 0 ? 14 : -6);
+          var hHandY = sy + 10;
+          drawHeartGem(hHandX, hHandY, true);
+          if (Math.random() < 0.5) {
+            parts.push({
+              x: sk.x + (sk.face > 0 ? 14 : -6), y: sk.y + 10,
+              vx: rnd(-10, 10), vy: rnd(-20, -5),
+              life: 0.3, max: 0.3,
+              c: '#ff0055', s: 2, g: -5
+            });
+          }
+        }
+      }
+    }
+
+    // 4. Stolen Heart Particle Stream
+    for (var hi = 0; hi < stolenHeartTrail.length; hi++) {
+      var pt = stolenHeartTrail[hi];
+      var hAlpha = clamp(pt.life / pt.max, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = hAlpha;
+      drawHeartGem(Math.round(pt.x - camX - 4), Math.round(pt.y - 4), true);
+      ctx.restore();
+    }
+  }
+
   function drawPrincess(pr, camX) {
     if (!pr.active) return;
     var x = Math.round(pr.x - camX), y = Math.round(pr.y);
@@ -2543,6 +3627,53 @@ kbd {
 
   function drawBossDefeat(bd, camX) {
     var x = Math.round(bd.x - camX), y = Math.round(bd.y);
+
+    if (bd.isKing) {
+      ctx.save();
+      // 1. Fallen bone remains and shattered skull on ground
+      R(x + 2, GROUND_Y - 4, 34, 4, '#1b1226');
+      R(x + 6, GROUND_Y - 6, 26, 3, '#dfd5bd');
+      R(x + 8, GROUND_Y - 8, 18, 3, '#c5bba4');
+
+      // Tattered wing bones collapsed to the side
+      ctx.strokeStyle = '#a89d8b';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x + 26, GROUND_Y - 3);
+      ctx.lineTo(x + 38, GROUND_Y - 14);
+      ctx.lineTo(x + 46, GROUND_Y - 6);
+      ctx.stroke();
+
+      // Fallen cracked skull
+      R(x + 4, GROUND_Y - 14, 12, 10, '#dfd5bd');
+      R(x + 6, GROUND_Y - 12, 8, 7, '#efe8d8');
+      var eyeFade = Math.max(0, bd.timer / 3.5);
+      R(x + 7, GROUND_Y - 10, 2, 2, 'rgba(168, 85, 247, ' + eyeFade + ')');
+      R(x + 11, GROUND_Y - 10, 2, 2, 'rgba(168, 85, 247, ' + eyeFade + ')');
+
+      // 2. Golden crown bouncing / at rest
+      var crX = Math.round((bd.crownX !== undefined ? bd.crownX : (bd.x + 18)) - camX);
+      var crY = Math.round(bd.crownY || (GROUND_Y - 8));
+      ctx.save();
+      ctx.translate(crX, crY);
+      ctx.rotate(bd.crownAngle || 0);
+      ctx.shadowColor = '#f5c452';
+      ctx.shadowBlur = 5;
+      // Crown base band
+      R(-7, -2, 14, 3, '#d49b20');
+      R(-6, -2, 12, 2, '#f5c452');
+      // Crown 3 peaks
+      R(-6, -6, 3, 4, '#f5c452');
+      R(-2, -9, 4, 7, '#ffe57f');
+      R(3, -6, 3, 4, '#f5c452');
+      // Center glowing ruby gem
+      R(-1, -3, 2, 2, '#ef4444');
+      ctx.restore();
+
+      ctx.restore();
+      return;
+    }
+
     var dStep = Math.min(6, Math.floor(Math.max(0, 3.2 - bd.timer) * 2.2));
     var frName = 'defeat_' + dStep;
     var fr = (ATLAS_DATA.boss && ATLAS_DATA.boss[frName]) || ATLAS_DATA.boss['defeat_6'] || ATLAS_DATA.boss['defeat'];
@@ -2664,7 +3795,18 @@ kbd {
 
     // In-game HUD
     for (var i = 0; i < player.maxhp; i++) {
-      drawHeartGem(8 + i * 11, 8, i < player.hp);
+      var hx = 8 + i * 11, hy = 8;
+      if (i === 4 && hudHeartFlash > 0) {
+        var flashAlpha = Math.sin(t * 24) * 0.5 + 0.5;
+        ctx.save();
+        ctx.shadowColor = '#a855f7';
+        ctx.shadowBlur = 6;
+        R(hx - 1, hy - 1, 9, 9, 'rgba(168, 85, 247, ' + (flashAlpha * 0.6) + ')');
+        drawHeartGem(hx, hy, false);
+        ctx.restore();
+      } else {
+        drawHeartGem(hx, hy, i < player.hp);
+      }
     }
 
     var gW = 54, gX = 8, gY = 22;
@@ -2702,6 +3844,50 @@ kbd {
         R(bx, by - 5, bw, 2, '#14111d');
         R(bx, by - 5, shbW, 2, '#38bdf8');
         txt('GUARD ACTIVE', W / 2, by - 20, '#38bdf8', 6, 'center');
+      }
+    } else if (bossActive && boss2 && boss2.hp > 0 && state === 'play') {
+      var bw = 220, bx = (W - bw) / 2, by = H - 24;
+      R(bx - 3, by - 3, bw + 6, 12, '#0c0714');
+      R(bx - 2, by - 2, bw + 4, 10, '#351545');
+      R(bx, by, bw, 6, '#13061c');
+
+      var catchUpW = Math.round(bw * (boss2.displayHp || boss2.hp) / boss2.maxhp);
+      R(bx, by, catchUpW, 6, '#ffffff');
+
+      var hpW = Math.round(bw * boss2.hp / boss2.maxhp);
+      R(bx, by, hpW, 6, '#9333ea');
+      R(bx, by, hpW, 2, '#c026d3');
+
+      R(bx - 4, by - 1, 3, 8, '#f5c452');
+      R(bx + bw + 1, by - 1, 3, 8, '#f5c452');
+
+      txt('THE SKELETON KING', W / 2, by - 12, '#f5c452', 8, 'center', '#4a044e');
+
+      if (boss2.shieldActive) {
+        var shbW = Math.round(bw * (boss2.shieldHp / boss2.maxShieldHp));
+        R(bx, by - 5, bw, 2, '#14111d');
+        R(bx, by - 5, shbW, 2, '#dfd5bd');
+        txt('BONE SHIELD ACTIVE', W / 2, by - 20, '#e9d5ff', 6, 'center');
+      } else if (boss2.staggerTimer > 0) {
+        txt('STAGGERED!', W / 2, by - 20, '#ff4444', 6, 'center');
+      } else if (boss2.enraged) {
+        txt('ENRAGED', W / 2, by - 20, '#ef4444', 6, 'center', '#450a0a');
+      }
+    }
+
+    if (state === 'resurrection') {
+      R(0, 0, W, 22, '#000000');
+      R(0, H - 22, W, 22, '#000000');
+      var rMsg = '';
+      if (resurrectionTimer < 0.5) rMsg = 'A deep silence falls over the valley...';
+      else if (resurrectionTimer < 1.8) rMsg = 'A dark shadow emerges from the ashes...';
+      else if (resurrectionTimer < 2.8) rMsg = 'The dark remnant steals a piece of your soul!';
+      else if (resurrectionTimer < 3.8) rMsg = 'The stolen heart infuses the fallen champion!';
+      else if (resurrectionTimer < 4.6) rMsg = 'The mortal armor shatters...';
+      else rMsg = 'BEHOLD: THE SKELETON KING RISES!';
+
+      if (rMsg) {
+        txt(rMsg, W / 2, H - 15, '#f5c452', 7, 'center', '#2e1065');
       }
     }
 
@@ -2859,6 +4045,7 @@ kbd {
     for (var ci = 0; ci < corpses.length; ci++) drawCorpse(corpses[ci], camX);
     for (var e = 0; e < enemies.length; e++) drawEnemy(enemies[e], camX);
     if (bossDefeated) drawBossDefeat(bossDefeated, camX);
+    if (state === 'resurrection') drawResurrectionCutscene(camX);
 
     // The Princess (Ending)
     if (princess.active) drawPrincess(princess, camX);
@@ -2878,6 +4065,22 @@ kbd {
         R(px - 2, py - 2, 12, 10, 'rgba(255, 77, 102, 0.3)');
         R(px, py, 8, 6, '#ff3b4d');
         R(px + 1, py + 1, 6, 4, '#ffffff');
+      } else if (pr.type === 'wave') {
+        var wDir = pr.vx > 0 ? 1 : -1;
+        ctx.save();
+        ctx.fillStyle = '#ff5522';
+        ctx.beginPath();
+        ctx.moveTo(px, py + 14);
+        ctx.lineTo(px + wDir * 14, py + 14 - 14);
+        ctx.lineTo(px + wDir * 6, py + 14);
+        ctx.fill();
+        ctx.fillStyle = '#ffcc44';
+        ctx.beginPath();
+        ctx.moveTo(px + wDir * 2, py + 14);
+        ctx.lineTo(px + wDir * 10, py + 14 - 9);
+        ctx.lineTo(px + wDir * 5, py + 14);
+        ctx.fill();
+        ctx.restore();
       }
     }
 
@@ -2997,9 +4200,69 @@ kbd {
     get cam() { return cam; },
     get GROUND_Y() { return GROUND_Y; },
     get LEVEL_W() { return LEVEL_W; },
+    get boss2() { return boss2; },
+    get resurrectionPhase() { return resurrectionPhase; },
     reset: reset,
-    startGame: startGame
+    startGame: startGame,
+    triggerResurrection: function() {
+      state = 'resurrection';
+      resurrectionTimer = 0;
+      resurrectionPhase = 0;
+      skeletonKingCheckpoint = true;
+      initResurrectionCutscene((boss && boss.x) || 3380, (boss && boss.y) || (GROUND_Y - 52), 1);
+    },
+    spawnSkeletonKing: function() {
+      reset();
+      startGame();
+      player.x = 3100;
+      player.hp = 4;
+      bossActive = true;
+      minX = ARENA_MIN - 10;
+      enemies = enemies.filter(function(x) { return x.type !== 'boss' && x.type !== 'boss2'; });
+      boss2 = mkSkeletonKing(3360, GROUND_Y - 58);
+      enemies.push(boss2);
+      playMusic('boss_phase2');
+    },
+    killSkeletonKing: function() {
+      if (boss2) {
+        damageEnemy(boss2, 999, 'naks_slash');
+      }
+    }
   };
+
+  function checkHash() {
+    var h = (window.location.hash || '').toLowerCase();
+    if (h === '#resurrection') {
+      reset();
+      startGame();
+      player.x = 3180;
+      player.hp = 5;
+      bossActive = true;
+      minX = ARENA_MIN - 10;
+      enemies = enemies.filter(function(x) { return x.type !== 'boss' && x.type !== 'boss2'; });
+      state = 'resurrection';
+      resurrectionTimer = 0;
+      resurrectionPhase = 0;
+      skeletonKingCheckpoint = true;
+      initResurrectionCutscene(3380, GROUND_Y - 52, 1);
+    } else if (h === '#king') {
+      window.__GAME.spawnSkeletonKing();
+    } else if (h === '#ending') {
+      reset();
+      startGame();
+      player.x = 3380;
+      state = 'ending';
+      endingTimer = 0;
+      creditsY = 0;
+      endingPhase = 'reunion';
+      princess.active = true;
+      princess.kissTriggered = false;
+      playMusic('ending');
+    }
+  }
+  window.addEventListener('hashchange', checkHash);
+  setTimeout(checkHash, 150);
+
   requestAnimationFrame(frame);
 })();
 </script>
