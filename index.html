@@ -2301,6 +2301,10 @@ const BG_IMG = new Image();
       stepParticles(dt);
       var p = player;
 
+      // Smoothly frame lovers in the center during reunion and kiss
+      var targetCam = clamp(3378 - W / 2, 0, LEVEL_W - W);
+      cam.x += (targetCam - cam.x) * Math.min(1, dt * 5);
+
       // Phase 1: Reunion (0 - 4.5s)
       if (endingTimer < 4.5) {
         endingPhase = 'reunion';
@@ -4486,6 +4490,17 @@ function drawResurrectionCutscene(camX) {
       initResurrectionCutscene(3380, GROUND_Y - 52, 1);
     } else if (h === '#king') {
       window.__GAME.spawnSkeletonKing();
+    } else if (h === '#reunion_dialog') {
+      reset();
+      startGame();
+      player.x = 3365;
+      cam.x = 3378 - W / 2;
+      state = 'ending';
+      endingTimer = 2.0;
+      endingPhase = 'reunion';
+      princess.active = true;
+      princess.kissTriggered = false;
+      playMusic('ending');
     } else if (h === '#ending') {
       reset();
       startGame();
@@ -4503,7 +4518,31 @@ function drawResurrectionCutscene(camX) {
       player.x = 3372;
       cam.x = 3378 - W / 2;
       state = 'ending';
-      endingTimer = 5.5;
+      endingTimer = 4.5;
+      endingPhase = 'kiss';
+      princess.active = true;
+      princess.kissTriggered = true;
+      playMusic('ending');
+    } else if (h === '#kiss_climax') {
+      reset();
+      startGame();
+      player.x = 3372;
+      cam.x = 3378 - W / 2;
+      state = 'ending';
+      endingTimer = 7.2;
+      endingPhase = 'kiss';
+      princess.active = true;
+      princess.kissTriggered = true;
+      playMusic('ending');
+    } else if (h.indexOf('#kiss_f') === 0) {
+      reset();
+      startGame();
+      player.x = 3372;
+      cam.x = 3378 - W / 2;
+      state = 'ending';
+      var fNum = parseInt(h.replace('#kiss_f', ''), 10) || 0;
+      var fTimers = [4.7, 5.2, 5.7, 6.2, 6.7, 7.4, 8.1];
+      endingTimer = fTimers[Math.min(6, Math.max(0, fNum))];
       endingPhase = 'kiss';
       princess.active = true;
       princess.kissTriggered = true;
