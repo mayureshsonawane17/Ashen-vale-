@@ -1,0 +1,17 @@
+.git
+screenshots
+.DS_Store
+*.orig.png
+*test*.png
+*.gif
+dipkiss_*.png
+update_ending_assets.py
+bottom_section.png
+hurt_death_row.png
+row_310_430.png
+riya_sheet.png
+riya_atlas_clean.png
+revived_boss_sheet.png
+revived_boss_cinematic.png
+warden Sheet.png
+enemy.png2.png
