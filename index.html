@@ -685,6 +685,9 @@ const BG_IMG = new Image();
   function press(a) { if (!held[a]) edge[a] = true; held[a] = true; ensureAudio(); }
   function release(a) { held[a] = false; }
   window.addEventListener('keydown', function (e) {
+    if (/^Digit[1-4]$/.test(e.code) && boss2) {
+      boss2.debugPhase(+e.code[5]);
+    }
     var a = KEYMAP[e.code];
     if (!a) return;
     e.preventDefault();
@@ -807,19 +810,601 @@ const BG_IMG = new Image();
     };
   }
   function mkSkeletonKing(x, y) {
-    return {
-      type: 'boss2', x: x || 3360, y: y || (GROUND_Y - 58), w: 44, h: 58, hp: 36, maxhp: 36, displayHp: 36,
-      vx: 0, vy: 0, face: -1, onGround: true, airT: 0, state: 'idle', st: 1.2, flash: 0, kb: 0, score: 3500,
-      anim: 0, wingTimer: 0, wingAngle: 0, hoverY: 0, fired: false,
-      shieldActive: false, shieldHp: 6, maxShieldHp: 6, shieldCd: 4.0, shieldTimer: 0, shieldFlash: 0,
-      chargeCd: 4.5, laserCd: 6.0, flightCd: 6.5, teleportCd: 6.0, cycloneCd: 7.0, xSlashCd: 6.5, summonCd: 11.0, ultimateCd: 8.0,
-      laserState: 'none', laserTimer: 0, targetHoverY: 0, swoopT: 0, swoopStartX: 0, swoopTargetX: 0,
-      enragedTriggered: false, phase3Triggered: false, phase4Triggered: false, volleyCount: 0,
-      currentPhase: 2
-    };
+    return new Boss(x, y);
   }
 
-  function buildWorld() {
+  
+  /* =====================================================================
+   THE WARDEN - 4-phase boss AI (from attached file)
+   1 CONFIG (phases + attacks)  2 BOSS CORE (FSM, generator coroutines)
+   3 WORLD UPDATE (hit, proj, zones, beams, mins, fx)
+  ===================================================================== */
+  const WARDEN_PHASES = [null,
+    { name: 'THE WARDEN', spd: 1, dmg: 1, gap: 1.3, col: '#9aa0c0' },
+    { name: 'WINGED REAPER', spd: 1.1, dmg: 1.2, gap: 1, col: '#b46cff' },
+    { name: 'SOUL TYRANT', spd: 1.3, dmg: 1.45, gap: 0.65, col: '#d23cff' },
+    { name: 'ETERNAL DEATH', spd: 1.45, dmg: 1.75, gap: 0.4, col: '#ff3cf0' }
+  ];
+  const WARDEN_PHASE_AT = [1, 0.75, 0.5, 0.25];
+
+  const WARDEN_ATTACKS = [
+    { id: 'slash', ph: 1, w: 4, cd: 1.2, r: [0, 85] },
+    { id: 'heavy', ph: 1, w: 3, cd: 3, r: [0, 85] },
+    { id: 'stomp', ph: 1, w: 2, cd: 4, r: [0, 130] },
+    { id: 'block', ph: 1, w: 2, cd: 6, r: [0, 200] },
+    { id: 'bolt', ph: 1, w: 3, cd: 2.5, r: [100, 450] },
+    { id: 'summon', ph: 1, w: 1, cd: 14, r: [0, 450] },
+    { id: 'wingSlash', ph: 2, w: 4, cd: 2.5, r: [0, 160] },
+    { id: 'shadowDash', ph: 2, w: 3, cd: 4, r: [80, 450] },
+    { id: 'teleport', ph: 2, w: 2, cd: 5, r: [0, 450] },
+    { id: 'soulOrbs', ph: 2, w: 3, cd: 6, r: [75, 450] },
+    { id: 'bladeThrow', ph: 2, w: 3, cd: 3.5, r: [90, 450] },
+    { id: 'dive', ph: 2, w: 3, cd: 5, r: [0, 450] },
+    { id: 'soulAnnihilation', ph: 3, w: 2, cd: 12, r: [0, 450] },
+    { id: 'deathSpiral', ph: 3, w: 2, cd: 9, r: [0, 450] },
+    { id: 'bladeBarrage', ph: 3, w: 3, cd: 6, r: [50, 450] },
+    { id: 'wingGuillotine', ph: 3, w: 3, cd: 6, r: [0, 200] },
+    { id: 'heavensCollapse', ph: 3, w: 2, cd: 10, r: [0, 450] },
+    { id: 'soulPrison', ph: 3, w: 2, cd: 11, r: [0, 250] },
+    { id: 'armySummon', ph: 3, w: 1, cd: 22, r: [0, 450] },
+    { id: 'eternalBeam', ph: 4, w: 3, cd: 8, r: [0, 450] },
+    { id: 'phantomArmy', ph: 4, w: 2, cd: 11, r: [0, 450] },
+    { id: 'rainOfBlades', ph: 4, w: 3, cd: 8, r: [0, 450] },
+    { id: 'voidExplosion', ph: 4, w: 2, cd: 12, r: [0, 130] },
+    { id: 'reapersJudgment', ph: 4, w: 3, cd: 9, r: [0, 450] }
+  ];
+
+  const G = { t: 0, hit: [], proj: [], zones: [], beams: [], mins: [], fx: [], shake: 0 };
+
+  class Boss {
+    constructor(x, y) {
+      Object.assign(this, {
+        type: 'boss2',
+        x: x || 3360,
+        y: y || GROUND_Y,
+        vx: 0,
+        hpMax: 36,
+        hp: 36,
+        displayHp: 36,
+        phase: 2, // Starts at Phase 2 (Winged Reaper) when awakened in Level 2! (keys 1-4 jump phases)
+        face: -1,
+        anim: 'idle',
+        at: 0,
+        flying: false,
+        hover: 85,
+        fast: false,
+        act: null,
+        wait: 0,
+        gap: 1.5,
+        cd: {},
+        block: false,
+        inv: false,
+        tele: null,
+        vis: 1,
+        rage: 1,
+        lastStand: false,
+        transforming: false,
+        dead: false,
+        flash: 0,
+        modeT: 4,
+        countered: false,
+        w: 44,
+        h: 58,
+        score: 3500
+      });
+    }
+
+    get ps() { return WARDEN_PHASES[this.phase]; }
+    get dm() { return this.ps.dmg * this.rage; }
+    get cy() { return this.y - 32; }
+    get currentPhase() { return this.phase; }
+    rect() { return { x: this.x - this.w / 2, y: this.y - this.h, w: this.w, h: this.h }; }
+    setAnim(a) { if (this.anim !== a) { this.anim = a; this.at = 0; } }
+    aim() { return Math.atan2((player.y - 14) - this.cy, player.x - this.x); }
+
+    damage(d) {
+      if (this.inv || this.dead) return;
+      if (this.block) {
+        d *= 0.2;
+        this.countered = true;
+        sfx('shield_block');
+        burst(this.x + (this.face > 0 ? this.w / 2 : -this.w / 2), this.cy, '#c084fc', 8, 120);
+      }
+      this.hp = Math.max(this.hp - d, (WARDEN_PHASE_AT[this.phase] || 0) * this.hpMax - 1);
+      this.flash = 0.14;
+      burst(this.x, this.cy, this.ps.col, 6);
+      if (this.hp <= 0) {
+        this.dead = true;
+        this.act = null;
+        this.tele = null;
+        burst(this.x, this.cy, '#fff', 80, 260);
+        // Trigger Level 2 Boss defeat sequence
+        bossDefeated = {
+          x: this.x, y: this.y, face: this.face, timer: 3.5,
+          isKing: true,
+          crownX: this.x + 18,
+          crownY: this.y - 12,
+          crownVy: -180,
+          crownVx: this.face * 35,
+          crownAngle: 0
+        };
+        winTimer = 3.5;
+        cam.shake = 22;
+        sfx('boom');
+        projs = [];
+        burst(this.x, this.cy, '#dfd5bd', 50, 240);
+        burst(this.x, this.cy, '#7b2cbf', 40, 260);
+        burst(this.x, this.cy, '#f5c452', 30, 200);
+        playMusic('victory');
+        say('THE SKELETON KING IS DEFEATED!', 2.5);
+      }
+    }
+
+    debugPhase(n) {
+      this.phase = clamp(n, 1, 4);
+      this.hp = n === 1 ? this.hpMax : (WARDEN_PHASE_AT[n - 1] * this.hpMax);
+      this.flying = n >= 2;
+      this.act = null;
+      this.tele = null;
+      say('JUMPED TO PHASE ' + n + ': ' + this.ps.name, 1.5);
+    }
+
+    start(g) { this.act = g; this.wait = 0; }
+
+    update(dt) {
+      if (this.dead) return;
+      this.at += dt;
+      this.flash -= dt;
+      if (this.displayHp === undefined) this.displayHp = this.hp;
+      if (this.displayHp > this.hp) this.displayHp = Math.max(this.hp, this.displayHp - dt * 10);
+      for (const k in this.cd) this.cd[k] -= dt;
+
+      const f = this.hp / this.hpMax;
+      const np = f > 0.75 ? 1 : f > 0.5 ? 2 : f > 0.25 ? 3 : 4;
+      if (np > this.phase && !this.transforming) {
+        this.phase++;
+        this.block = false;
+        this.start(this.transform());
+      }
+
+      this.vx *= Math.pow(0.002, dt);
+      if (this.act) this.run(dt);
+      else this.think(dt);
+
+      this.x = clamp(this.x + this.vx * dt, ARENA_MIN + 25, LEVEL_W - 25);
+      const ty = this.flying ? GROUND_Y - this.hover + Math.sin(G.t * 2.2) * 5 : GROUND_Y;
+      this.y += (ty - this.y) * Math.min(1, dt * (this.fast ? 16 : 4));
+
+      const fl = [0, 0, 0.25, 0.5, 1][this.phase];
+      if (Math.random() < fl * dt * 40) {
+        G.fx.push({
+          x: this.x + rnd(-20, 20),
+          y: this.y - rnd(0, 65),
+          vx: rnd(-10, 10),
+          vy: -rnd(20, 65),
+          life: 0.7,
+          col: this.ps.col,
+          r: rnd(2, 4)
+        });
+      }
+    }
+
+    run(dt) {
+      this.wait -= dt;
+      while (this.act && this.wait <= 0) {
+        const r = this.act.next();
+        if (r.done) {
+          this.act = null;
+          this.tele = null;
+          this.block = false;
+          this.fast = false;
+          break;
+        }
+        this.wait = this.tele ? r.value : (r.value || 0) / this.ps.spd;
+      }
+    }
+
+    think(dt) {
+      const d = player.x - this.x;
+      const ad = Math.abs(d);
+      this.face = Math.sign(d) || this.face;
+      this.gap -= dt;
+
+      if (this.phase >= 3 && this.phase === 4 && !this.lastStand && this.hp / this.hpMax < 0.1) {
+        this.lastStand = true;
+        this.start(this.atk_lastStand());
+        return;
+      }
+
+      if (this.phase >= 2) {
+        this.modeT -= dt;
+        if (this.modeT <= 0) {
+          this.flying = Math.random() < 0.6;
+          this.modeT = rnd(4, 8);
+          this.hover = rnd(70, 100);
+        }
+      }
+
+      if (this.gap <= 0) {
+        const a = this.pick(ad);
+        if (a) {
+          this.cd[a.id] = a.cd;
+          this.gap = (this.ps.gap / this.rage) * rnd(0.8, 1.2);
+          this.start(this['atk_' + a.id]());
+          return;
+        }
+      }
+
+      const sp = (ad > 150 ? 80 : 40) * this.ps.spd;
+      if (ad > (this.flying ? 100 : 48)) {
+        this.vx = this.face * sp;
+        this.setAnim(this.flying ? 'fly' : ad > 150 ? 'run' : 'walk');
+      } else {
+        this.setAnim(this.flying ? 'fly' : 'idle');
+      }
+    }
+
+    pick(ad) {
+      const c = WARDEN_ATTACKS.filter(a => a.ph <= this.phase && (this.cd[a.id] || 0) <= 0 && ad >= a.r[0] && ad <= a.r[1]);
+      let t = c.reduce((s, a) => s + a.w, 0);
+      let r = Math.random() * t;
+      for (const a of c) {
+        if ((r -= a.w) <= 0) return a;
+      }
+      return c[0];
+    }
+
+    /* --- primitives used by attacks --- */
+    *tell(t, anim, box, col) {
+      this.setAnim(anim);
+      this.tele = { t, max: t, col: col || '#ff5050', box };
+      yield t;
+      this.tele = null;
+    }
+    *land() {
+      this.flying = false;
+      while (this.y < GROUND_Y - 2) yield 0.05;
+    }
+    *rise(h = 85) {
+      this.flying = true;
+      this.hover = h;
+      this.setAnim('fly');
+      while (this.y > GROUND_Y - h + 6) yield 0.05;
+    }
+    hit(x, y, w, h, d, life = 0.12) {
+      G.hit.push({ x: x - w / 2, y: y - h / 2, w, h, dmg: d * this.dm, life, from: this.x });
+    }
+    proj(a, o = {}) {
+      G.proj.push({
+        x: o.x ?? this.x, y: o.y ?? this.cy,
+        vx: Math.cos(a) * (o.s || 160), vy: Math.sin(a) * (o.s || 160),
+        r: o.r || 6, dmg: (o.d || 1) * this.dm, life: o.life || 4,
+        home: o.home || 0, warn: o.warn || 0, col: o.col || this.ps.col,
+        kind: o.kind || 'orb', s: o.s || 160
+      });
+    }
+    zone(x, y, r, delay, d, o = {}) {
+      G.zones.push({
+        x, y, r, t: delay, max: delay, dmg: d * this.dm,
+        col: o.col || this.ps.col, linger: o.linger || 0.15,
+        pillar: o.pillar, follow: o.follow
+      });
+    }
+    beam(a0, a1, tele, dur, d) {
+      G.beams.push({ o: this, a0, a1, t: 0, tele, dur, dmg: d * this.dm });
+    }
+    spawn(n) {
+      for (let i = 0; i < n && G.mins.length < 8; i++) {
+        const x = clamp(this.x + rnd(-150, 150), ARENA_MIN + 20, LEVEL_W - 20);
+        enemies.push(mkSkel(x));
+        burst(x, GROUND_Y - 10, '#bbb', 10);
+      }
+    }
+    melee(dist, w, h, d) {
+      return [this.x + this.face * dist, this.y - h / 2 - 2, w, h, d];
+    }
+
+    /* ---------- ATTACK GENERATORS ---------- */
+    *transform() {
+      this.transforming = true; this.inv = true; this.tele = null; const p = this.phase;
+      this.setAnim('transform'); this.vx = 0; this.fast = false;
+      if (p >= 2) this.flying = true; this.hover = 85; cam.shake = 16;
+      yield 0.9; burst(this.x, this.cy, p === 2 ? '#aaa' : this.ps.col, 70, 260); cam.shake = 20;
+      this.zone(this.x, GROUND_Y - 10, 115, 0.01, 1, { col: this.ps.col });
+      if (p === 2) for (let i = 0; i < 6; i++) G.fx.push({ x: this.x, y: this.cy, vx: rnd(-150, 150), vy: rnd(-150, 0), life: 1.5, col: '#8a8fa8', r: 5 });
+      yield 1.3; this.inv = false; this.transforming = false; this.gap = 0.8;
+    }
+    *atk_slash() {
+      yield* this.land(); let b = this.melee(40, 75, 35, 1);
+      yield* this.tell(0.55, 'slash', b); this.vx = this.face * 160; this.hit(...this.melee(40, 75, 35, 1)); yield 0.25;
+      if (this.phase >= 3) {
+        this.face = Math.sign(player.x - this.x) || this.face;
+        yield* this.tell(0.3, 'slash', this.melee(40, 85, 35, 1)); this.hit(...this.melee(40, 85, 35, 1)); yield 0.25;
+      }
+    }
+    *atk_heavy() {
+      yield* this.land(); yield* this.tell(0.95, 'heavy', this.melee(48, 100, 60, 2), '#ff2020');
+      this.hit(...this.melee(48, 100, 60, 2)); cam.shake = 14; yield 0.55;
+    }
+    *atk_stomp() {
+      yield* this.land(); yield* this.tell(0.7, 'stomp', [this.x, GROUND_Y - 10, 110, 20]);
+      cam.shake = 14; this.hit(this.x, GROUND_Y - 10, 110, 20, 1);
+      for (const a of [0, Math.PI]) this.proj(a, { y: GROUND_Y - 8, s: 190, r: 8, d: 1, life: 2.5, kind: 'wave' });
+      yield 0.6;
+    }
+    *atk_block() {
+      yield* this.land(); this.block = true; this.countered = false; this.setAnim('block'); yield 1.3; this.block = false;
+      if (this.countered) {
+        this.face = Math.sign(player.x - this.x) || this.face;
+        yield* this.tell(0.3, 'slash'); this.hit(...this.melee(40, 85, 40, 1)); yield 0.3;
+      }
+    }
+    *atk_bolt() {
+      yield* this.tell(0.5, 'cast', null, '#c060ff');
+      const n = this.phase >= 3 ? 5 : this.phase >= 2 ? 3 : 1;
+      for (let i = 0; i < n; i++) this.proj(this.aim() + (i - (n - 1) / 2) * 0.22, { s: 170, d: 1 });
+      yield 0.5;
+    }
+    *atk_summon() {
+      yield* this.land(); yield* this.tell(1, 'summon', null, '#fff'); this.spawn(this.phase > 1 ? 3 : 2); yield 0.5;
+    }
+    *atk_wingSlash() {
+      yield* this.rise(65);
+      const b = [this.x + this.face * 55, (this.y + GROUND_Y) / 2, 85, GROUND_Y - this.y + 5, 1];
+      yield* this.tell(0.65, 'slash', b, '#c060ff'); this.vx = this.face * 210; cam.shake = 8;
+      this.hit(this.x + this.face * 55, (this.y + GROUND_Y) / 2, 85, GROUND_Y - this.y + 5, 1); yield 0.4;
+    }
+    *atk_shadowDash() {
+      yield* this.land(); this.face = Math.sign(player.x - this.x) || 1;
+      yield* this.tell(0.5, 'teleport', [this.x + this.face * 110, GROUND_Y - 25, 220, 45], '#a040ff');
+      this.vis = 0.35;
+      for (let i = 0; i < 9; i++) {
+        this.vx = this.face * 500; this.hit(this.x, GROUND_Y - 25, 45, 50, 1, 0.08); burst(this.x, this.cy, '#80f', 4); yield 0.04;
+      }
+      this.vis = 1; yield 0.3;
+    }
+    *atk_teleport() {
+      const dest = clamp(player.x + (Math.random() < 0.5 ? -1 : 1) * rnd(70, 130), ARENA_MIN + 30, LEVEL_W - 30);
+      this.zone(dest, GROUND_Y - 10, 35, 0.8, 1);
+      yield* this.tell(0.35, 'teleport', null, '#fff'); this.vis = 0; burst(this.x, this.cy, '#c8f', 30);
+      yield 0.45; this.x = dest; this.vis = 1; burst(this.x, this.cy, '#c8f', 30);
+      this.face = Math.sign(player.x - this.x) || 1; yield 0.3;
+    }
+    *atk_soulOrbs() {
+      yield* this.rise(85); yield* this.tell(0.6, 'cast', null, '#c060ff');
+      for (let i = 0; i < 3; i++) this.proj(-Math.PI / 2 + (i - 1) * 0.7, { s: 85, r: 7, d: 1, life: 5, home: 1.7 });
+      yield 0.6;
+    }
+    *atk_bladeThrow() {
+      yield* this.tell(0.5, 'cast', null, '#e0e0ff');
+      for (let i = -1; i <= 1; i++) this.proj(this.aim() + i * 0.18, { s: 270, r: 5, d: 1, kind: 'blade' });
+      yield 0.5;
+    }
+    *atk_dive() {
+      yield* this.rise(130); const tx = player.x; this.zone(tx, GROUND_Y - 10, 48, 1.3, 2);
+      yield* this.tell(0.8, 'cast', null, '#ff4040');
+      this.x = tx; this.fast = true; this.flying = false; this.setAnim('stomp'); yield 0.45;
+      cam.shake = 18; burst(tx, GROUND_Y, '#c060ff', 40); this.hit(tx, GROUND_Y - 20, 90, 40, 2); yield 0.3;
+    }
+    *atk_soulAnnihilation() {
+      yield* this.rise(85); yield* this.tell(1.1, 'cast', null, '#ff40ff');
+      for (let w = 0; w < 3; w++) {
+        for (let i = 0; i < 16; i++) this.proj(i / 16 * 6.283 + w * 0.2, { s: 130 + w * 15, d: 1 });
+        cam.shake = 8; yield 0.45;
+      }
+      yield 0.3;
+    }
+    *atk_deathSpiral() {
+      yield* this.tell(0.7, 'cast', null, '#ff40ff');
+      for (let i = 0; i < 48; i++) { this.proj(i * 0.38, { s: 125, d: 1 }); yield 0.05; }
+      yield 0.3;
+    }
+    *atk_bladeBarrage() {
+      yield* this.tell(0.6, 'cast', null, '#e0e0ff');
+      for (let i = 0; i < 10; i++) { this.proj(this.aim() + rnd(-0.25, 0.25), { s: 260, r: 5, d: 1, kind: 'blade' }); yield 0.12; }
+      yield 0.3;
+    }
+    *atk_wingGuillotine() {
+      yield* this.land(); yield* this.tell(0.9, 'slash', [this.x, GROUND_Y - 45, 150, 90], '#ff2020');
+      this.hit(this.x, GROUND_Y - 45, 150, 90, 2); cam.shake = 14; yield 0.35;
+      this.face = Math.sign(player.x - this.x) || 1; this.vx = this.face * 250; this.hit(this.x, GROUND_Y - 45, 150, 90, 2); yield 0.4;
+    }
+    *atk_heavensCollapse() {
+      yield* this.rise(100); yield* this.tell(1, 'cast', null, '#ff40ff');
+      for (let i = 0; i < 8; i++) {
+        this.zone(clamp(player.x + rnd(-130, 130), ARENA_MIN + 20, LEVEL_W - 20), GROUND_Y - 10, 30, 1 + i * 0.12, 1);
+        yield 0.12;
+      }
+      yield 1.2;
+    }
+    *atk_soulPrison() {
+      yield* this.tell(0.8, 'cast', null, '#80ffff');
+      for (const s of [-1, 1]) this.zone(player.x + s * 58, GROUND_Y - 10, 12, 1.1, 1, { linger: 2.2, pillar: 1 });
+      yield 1.2; this.proj(this.aim(), { s: 115, home: 1.2, life: 4, r: 8, d: 1 }); yield 1.5;
+    }
+    *atk_armySummon() {
+      yield* this.land(); yield* this.tell(1.4, 'summon', null, '#fff'); this.spawn(5); yield 0.5;
+    }
+    *atk_eternalBeam() {
+      yield* this.rise(95); const a = Math.atan2(GROUND_Y - this.cy, player.x - this.x), s = Math.random() < 0.5 ? 1 : -1;
+      yield* this.tell(1, 'cast', null, '#ff80ff'); this.beam(a - 0.6 * s, a + 0.6 * s, 0.3, 1.7, 1); yield 2.2;
+    }
+    *atk_phantomArmy() {
+      yield* this.tell(0.8, 'summon', null, '#ff80ff');
+      for (let i = 0; i < 4; i++) {
+        const l = i % 2;
+        this.proj(l ? Math.PI : 0, { x: l ? LEVEL_W + 15 : ARENA_MIN - 15, y: GROUND_Y - 22, s: 215, r: 15, d: 1, life: 4, kind: 'ghost', warn: 0.5 });
+        yield 0.5;
+      }
+      yield 0.4;
+    }
+    *atk_rainOfBlades() {
+      yield* this.rise(105); yield* this.tell(0.7, 'cast', null, '#e0e0ff');
+      for (let i = 0; i < 30; i++) {
+        this.proj(Math.PI / 2, { x: clamp(player.x + rnd(-150, 150), ARENA_MIN + 10, LEVEL_W - 10), y: -10, s: 310, r: 5, d: 1, kind: 'blade', warn: 0.6, life: 3 });
+        yield 0.1;
+      }
+      yield 0.6;
+    }
+    *atk_voidExplosion() {
+      yield* this.land(); yield* this.tell(1.3, 'cast', [this.x, GROUND_Y - 10, 280, 20], '#ff00ff');
+      this.zone(this.x, GROUND_Y - 10, 140, 0.01, 2); cam.shake = 22; burst(this.x, this.cy, '#f0f', 90, 300); yield 0.8;
+    }
+    *atk_reapersJudgment() {
+      yield* this.rise(105); yield* this.tell(0.6, 'cast', null, '#ff2020');
+      this.zone(player.x, GROUND_Y - 10, 38, 1.6, 2, { follow: 1, col: '#ff3030' });
+      yield 1.5; this.x = player.x; this.setAnim('heavy'); yield 0.4; cam.shake = 20; yield 0.4;
+    }
+    *atk_lastStand() {
+      this.inv = true; this.block = false; yield* this.rise(95); yield* this.tell(1.5, 'transform', null, '#ff00ff');
+      this.inv = false; this.rage = 1.4; cam.shake = 24; burst(this.x, this.cy, '#f0f', 100, 300);
+      for (let i = 0; i < 24; i++) this.proj(i / 24 * 6.283, { s: 150, d: 1 });
+      yield 1;
+    }
+  }
+
+  function updateBossWorld(dt) {
+    G.t += dt;
+    if (G.shake > 0) {
+      cam.shake = Math.max(cam.shake, G.shake);
+      G.shake = Math.max(0, G.shake - dt * 40);
+    }
+    if (!boss2 || boss2.dead) return;
+
+    // 1. Process G.hit (melee hitboxes)
+    for (const h of G.hit) {
+      h.life -= dt;
+      if (!h.done && overlap(h, player)) {
+        h.done = 1;
+        var facing = (player.face > 0 && h.from >= player.x) || (player.face < 0 && h.from <= player.x + player.w);
+        if (player.shielding && facing) {
+          var isParry = (player.shieldTime !== undefined && player.shieldTime <= 0.22);
+          if (isParry) {
+            hitstop = 0.08;
+            cam.shake = 7;
+            sfx('parry');
+            burst(player.x + (player.face > 0 ? player.w + 6 : -6), player.y + 16, '#f5c452', 18, 180, 0, 2.5);
+            say('PARRY!', 0.8);
+            if (boss2.block) boss2.countered = true;
+          } else {
+            player.shieldStamina = Math.max(0, player.shieldStamina - 8);
+            player.shieldBlockFlash = 0.18;
+            player.vx = -player.face * 35;
+            sfx('shield_block');
+            burst(player.x + (player.face > 0 ? player.w + 6 : -6), player.y + 16, '#38bdf8', 10, 110, 0, 1.5);
+          }
+        } else {
+          damagePlayer(1, h.from);
+        }
+      }
+    }
+    G.hit = G.hit.filter(h => h.life > 0);
+
+    // 2. Process G.proj (boss projectiles)
+    for (const p of G.proj) {
+      if (p.warn > 0) { p.warn -= dt; continue; }
+      if (p.home > 0) {
+        p.home -= dt;
+        var a = Math.atan2((player.y - 14) - p.y, player.x - p.x);
+        var c = Math.atan2(p.vy, p.vx);
+        var d = a - c;
+        d = Math.atan2(Math.sin(d), Math.cos(d));
+        var n = c + clamp(d, -dt * 2.2, dt * 2.2);
+        p.vx = Math.cos(n) * p.s;
+        p.vy = Math.sin(n) * p.s;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+
+      var prBox = { x: p.x - p.r, y: p.y - p.r, w: p.r * 2, h: p.r * 2 };
+      if (!player.dead && overlap(prBox, player)) {
+        var facingProj = (player.face > 0 && p.x >= player.x) || (player.face < 0 && p.x <= player.x + player.w);
+        if (player.shielding && facingProj) {
+          var isParry = (player.shieldTime !== undefined && player.shieldTime <= 0.22);
+          if (isParry) {
+            p.life = 0;
+            projs.push({
+              type: 'reflected_shot',
+              x: player.x + (player.face > 0 ? player.w + 6 : -6),
+              y: p.y,
+              vx: player.face * 380,
+              vy: rnd(-25, 25),
+              life: 2.2
+            });
+            hitstop = 0.08;
+            cam.shake = 7;
+            sfx('parry');
+            burst(p.x, p.y, '#f5c452', 18, 180, 0, 2.5);
+            say('DEFLECTED!', 0.8);
+          } else {
+            damagePlayer(1, p.x);
+            p.life = 0;
+            burst(p.x, p.y, '#38bdf8', 10, 110, 0, 1.5);
+          }
+        } else {
+          if (damagePlayer(1, p.x)) p.life = 0;
+        }
+      }
+      if (p.kind === 'blade' && p.y > GROUND_Y) p.life = 0;
+    }
+    G.proj = G.proj.filter(p => p.life > 0 && p.x > ARENA_MIN - 60 && p.x < LEVEL_W + 60);
+
+    // 3. Process G.zones (telegraphed zones and pillars)
+    for (const z of G.zones) {
+      z.t -= dt;
+      if (z.follow && z.t > 0.5) z.x += (player.x - z.x) * Math.min(1, dt * 4);
+      if (z.t <= 0) {
+        if (!z.fired) {
+          z.fired = 1;
+          burst(z.x, z.y, z.col, 20);
+          cam.shake = Math.max(cam.shake, 8);
+        }
+        var inZone = z.pillar ? (Math.abs(player.x - z.x) < z.r + 14) : (Math.hypot(player.x - z.x, (player.y - 14) - z.y) < z.r + 14);
+        if (inZone) damagePlayer(1, z.x);
+      }
+    }
+    G.zones = G.zones.filter(z => z.t > -z.linger);
+
+    // 4. Process G.beams (sweeping laser beams)
+    for (const b of G.beams) {
+      b.t += dt;
+      b.ang = b.t < b.tele ? b.a0 : b.a0 + (b.a1 - b.a0) * clamp((b.t - b.tele) / b.dur, 0, 1);
+      if (b.t > b.tele) {
+        cam.shake = Math.max(cam.shake, 4);
+        var dx = Math.cos(b.ang), dy = Math.sin(b.ang);
+        var px = player.x - b.o.x, py = (player.y - 14) - b.o.cy;
+        var tDot = clamp(px * dx + py * dy, 0, 800);
+        var dDist = Math.hypot(px - dx * tDot, py - dy * tDot);
+        if (dDist < 16) {
+          var facingBeam = (player.face > 0 && b.o.x >= player.x) || (player.face < 0 && b.o.x <= player.x + player.w);
+          if (player.shielding && facingBeam) {
+            if (!player.laserBlockCooldown || player.laserBlockCooldown <= 0) {
+              player.laserBlockCooldown = 0.14;
+              player.shieldStamina = Math.max(0, player.shieldStamina - 12);
+              player.shieldBlockFlash = 0.20;
+              player.vx = -player.face * 45;
+              sfx('shield_block');
+              cam.shake = 5;
+              var shieldX = player.x + (player.face > 0 ? player.w + 6 : -6);
+              burst(shieldX, player.y - 14, '#c084fc', 8, 160, 0, 2);
+            }
+          } else {
+            damagePlayer(1, b.o.x);
+          }
+        }
+      }
+    }
+    G.beams = G.beams.filter(b => b.t < b.tele + b.dur);
+
+    // 5. Process G.fx particles
+    for (const f of G.fx) {
+      f.x += f.vx * dt; f.y += f.vy * dt; f.life -= dt;
+    }
+    G.fx = G.fx.filter(f => f.life > 0);
+  }
+
+function buildWorld() {
     enemies = []; coins = []; hearts = []; flags = []; projs = []; parts = []; ghosts = []; corpses = [];
     bossDefeated = null;
     princess.active = false; princess.x = 3420; princess.face = -1;
@@ -1842,551 +2427,8 @@ const BG_IMG = new Image();
 
   function updateSkeletonKing(e, dt, pcx, ecx) {
     if (!bossActive || state !== 'play') return;
-    var dx = pcx - ecx;
-    var dist = Math.abs(dx);
-    if (e.displayHp === undefined) e.displayHp = e.hp;
-    if (e.displayHp > e.hp) e.displayHp = Math.max(e.hp, e.displayHp - dt * 10);
-    if (e.shieldFlash > 0) e.shieldFlash -= dt;
-    if (e.chargeCd > 0) e.chargeCd -= dt;
-    if (e.laserCd > 0) e.laserCd -= dt;
-    if (e.flightCd > 0) e.flightCd -= dt;
-    if (e.teleportCd > 0) e.teleportCd -= dt;
-    if (e.cycloneCd > 0) e.cycloneCd -= dt;
-    if (e.xSlashCd > 0) e.xSlashCd -= dt;
-    if (e.summonCd > 0) e.summonCd -= dt;
-    if (e.ultimateCd > 0) e.ultimateCd -= dt;
-    e.wingTimer = (e.wingTimer || 0) + dt;
-
-    if (e.kb > 0) {
-      e.kb -= dt; e.x += e.vx * dt; e.vx *= 0.8;
-      if (e.state !== 'hover' && e.state !== 'swoop') groundPhysics(e, dt);
-      e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
-      return;
-    }
-
-    // Determine Evolution Phase
-    if (e.hp <= 12) {
-      e.currentPhase = 4; // Final Phase: Awakened Demon of Violet Flames
-    } else if (e.hp <= 24) {
-      e.currentPhase = 3; // Phase 3: Awakened Demon / Blade Barrage
-    } else {
-      e.currentPhase = 2; // Phase 2: Winged Skeletal Demon
-    }
-
-    // Phase 3 Evolution Transition Trigger
-    if (e.currentPhase >= 3 && !e.phase3Triggered) {
-      e.phase3Triggered = true;
-      e.state = 'trans_phase3';
-      e.st = 1.3;
-      e.vx = 0;
-      sfx('king_roar');
-      sfx('boom');
-      cam.shake = 16;
-      say('PHASE III: BLADE BARRAGE AWAKENS!', 2.2);
-      burst(e.x + e.w / 2, e.y + e.h / 2, '#9333ea', 50, 240);
-      burst(e.x + e.w / 2, e.y + e.h / 2, '#e879f9', 35, 180);
-      playMusic('boss_phase2');
-    }
-
-    // Phase 4 Evolution Transition Trigger
-    if (e.currentPhase === 4 && !e.phase4Triggered) {
-      e.phase4Triggered = true;
-      e.state = 'trans_phase4';
-      e.st = 1.6;
-      e.vx = 0;
-      sfx('king_roar');
-      sfx('boom');
-      cam.shake = 22;
-      say('PHASE IV: AWAKENED DEMON OF VIOLET FLAMES!', 2.5);
-      burst(e.x + e.w / 2, e.y + e.h / 2, '#d946ef', 60, 260);
-      burst(e.x + e.w / 2, e.y + e.h / 2, '#ffffff', 40, 220);
-      burst(e.x + e.w / 2, e.y + e.h / 2, '#7e22ce', 45, 190);
-      playMusic('boss_phase2');
-    }
-
-    // Bone Shield Activation Logic
-    if (e.shieldCd > 0) e.shieldCd -= dt;
-    if (!e.shieldActive && e.shieldCd <= 0 && e.state === 'walk') {
-      if (Math.random() < (e.currentPhase === 4 ? 0.45 : (e.currentPhase === 3 ? 0.35 : 0.25))) {
-        e.shieldActive = true;
-        e.shieldHp = 6;
-        e.shieldTimer = 5.0;
-        sfx('shield_up');
-        say('RUNIC BONE SHIELD RAISED!', 1.2);
-      }
-    }
-    if (e.shieldActive) {
-      e.shieldTimer -= dt;
-      if (e.shieldTimer <= 0) {
-        e.shieldActive = false;
-        e.shieldCd = 8.0;
-      }
-    }
-
-    // Ambient Violet Magical Embers
-    var emberRate = e.currentPhase === 4 ? 0.95 : (e.currentPhase === 3 ? 0.7 : 0.45);
-    if (Math.random() < emberRate) {
-      var col = e.currentPhase === 4 ? (Math.random() < 0.5 ? '#d946ef' : '#f43f5e') : (Math.random() < 0.5 ? '#9333ea' : '#c084fc');
-      parts.push({
-        x: ecx + rnd(-24, 24), y: e.y + rnd(0, 32),
-        vx: rnd(-28, 28), vy: rnd(-65, -20),
-        life: rnd(0.3, 0.7), max: 0.7,
-        c: col, s: Math.random() < 0.4 ? 2.5 : 1.5, g: -30
-      });
-    }
-
-    // Staggered State (After Shield Break)
-    if (e.state === 'stagger') {
-      e.st -= dt;
-      if (e.st <= 0) { e.state = 'walk'; e.st = 1.0; }
-      groundPhysics(e, dt);
-      e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
-      return;
-    }
-
-    // Transition Roar States
-    if (e.state === 'trans_phase3' || e.state === 'trans_phase4') {
-      e.st -= dt;
-      cam.shake = Math.max(cam.shake, 5);
-      if (Math.random() < 0.7) {
-        parts.push({
-          x: ecx + rnd(-26, 26), y: e.y + e.h - 4,
-          vx: rnd(-45, 45), vy: rnd(-130, -50),
-          life: 0.45, max: 0.45,
-          c: Math.random() < 0.5 ? '#e879f9' : '#ffffff',
-          s: rnd(2, 4), g: -20
-        });
-      }
-      if (e.st <= 0) {
-        e.state = 'walk';
-        e.st = 0.8;
-      }
-      groundPhysics(e, dt);
-      e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
-      return;
-    }
-
-    e.st -= dt;
-    if (e.state !== 'leap' && e.state !== 'swing' && e.state !== 'charge' && e.state !== 'swoop' && e.state !== 'shadow_dash') {
-      e.face = dx >= 0 ? 1 : -1;
-    }
-
-    // ----------------- State Machine -----------------
-    if (e.state === 'idle') {
-      if (e.st <= 0) { e.state = 'walk'; e.st = 0.9; }
-    }
-    // Walk / AI Decision State
-    else if (e.state === 'walk') {
-      var moveSpd = e.currentPhase === 4 ? 75 : (e.currentPhase === 3 ? 62 : 48);
-      if (e.shieldActive) moveSpd *= 0.65;
-      e.x += e.face * moveSpd * dt;
-
-      if (e.st <= 0) {
-        var r = Math.random();
-
-        // 1. Phase 4 Ultimate: Eternal Beam (Colossal Laser)
-        if (e.currentPhase === 4 && e.laserCd <= 0 && r < 0.5) {
-          e.state = 'laser';
-          e.laserState = 'telegraph';
-          e.laserTimer = 0.6;
-          e.laserCd = 5.0;
-          e.st = 1.15;
-          sfx('laser_charge');
-        }
-        // 2. Phase 4 Ultimate: Void Explosion & Reaper's Judgment
-        else if (e.currentPhase === 4 && e.ultimateCd <= 0 && r < 0.55) {
-          e.state = 'void_explosion';
-          e.st = 1.3;
-          e.fired = false;
-          e.ultimateCd = 9.0;
-          sfx('laser_charge');
-        }
-        // 3. Phase 4: Rain of Blades (Vertical Energy Pillars)
-        else if (e.currentPhase === 4 && dist > 70 && r < 0.65) {
-          e.state = 'rain_of_blades';
-          e.st = 1.2;
-          e.fired = false;
-          sfx('king_roar');
-        }
-        // 4. Phase 3: Whirling Blade Cyclone
-        else if (e.currentPhase >= 3 && e.cycloneCd <= 0 && r < 0.5) {
-          e.state = 'cyclone';
-          e.st = 0.8;
-          e.fired = false;
-          e.cycloneCd = 6.5;
-          sfx('blade_throw');
-        }
-        // 5. Phase 3: Crossing X-Slash
-        else if (e.currentPhase >= 3 && e.xSlashCd <= 0 && r < 0.55) {
-          e.state = 'x_slash';
-          e.st = 0.75;
-          e.fired = false;
-          e.xSlashCd = 6.0;
-          sfx('slash3');
-        }
-        // 6. Phase 3: Large-Scale Ground Shockwave (Demon Maw)
-        else if (e.currentPhase >= 3 && dist > 80 && r < 0.45) {
-          e.state = 'demon_maw';
-          e.st = 0.85;
-          e.fired = false;
-          sfx('dash');
-        }
-        // 7. Phase 3: Massive Skeleton Army Summon
-        else if (e.currentPhase >= 3 && e.summonCd <= 0 && r < 0.4) {
-          e.state = 'summon_army';
-          e.st = 0.8;
-          e.fired = false;
-          e.summonCd = 12.0;
-          sfx('skel_shield');
-        }
-        // 8. Phase 2: Teleportation Behind Player
-        else if (e.teleportCd <= 0 && dist > 60 && r < 0.45) {
-          e.state = 'teleport';
-          e.st = 0.45;
-          e.teleportCd = 6.5;
-          sfx('dash');
-          burst(e.x + e.w / 2, e.y + e.h / 2, '#9333ea', 20, 150);
-        }
-        // 9. Phase 2: Shadow Dash (Leaves 3 Afterimages)
-        else if (dist > 50 && r < 0.45) {
-          e.state = 'shadow_dash';
-          e.st = 0.7;
-          sfx('dash');
-          say('SHADOW DASH!', 0.8);
-        }
-        // 10. Phase 2: Wing Hover & Diving Swoop
-        else if (e.flightCd <= 0 && r < 0.45) {
-          e.state = 'hover';
-          e.st = 2.2;
-          e.vy = -260;
-          e.targetHoverY = GROUND_Y - 95;
-          e.flightCd = 7.0;
-          e.gustTimer = 0;
-          sfx('wing_flap');
-        }
-        // 11. Tracking Soul Orbs Volley
-        else if (dist > 45 && r < 0.6) {
-          e.state = 'soul_orbs';
-          e.st = 0.72;
-          e.fired = false;
-        }
-        // 12. Aerial Cleave
-        else {
-          e.state = 'swing';
-          e.st = e.currentPhase === 4 ? 0.45 : 0.58;
-          e.fired = false;
-          e.face = dx >= 0 ? 1 : -1;
-        }
-      }
-    }
-    // State: Shadow Dash (leaves 3 purple shadow afterimages)
-    else if (e.state === 'shadow_dash') {
-      e.x += e.face * 170 * dt;
-      if (Math.random() < 0.7) {
-        ghosts.push({
-          x: e.x, y: e.y, face: e.face,
-          frName: 'winged_shadow_dash',
-          alpha: 0.6, life: 0.35, maxLife: 0.35,
-          color: '#9333ea'
-        });
-      }
-      var sBox = { x: e.face > 0 ? e.x + e.w - 10 : e.x - 16, y: e.y + 10, w: 26, h: e.h - 14 };
-      if (overlap(sBox, player)) damagePlayer(1, ecx);
-      if (e.st <= 0) { e.state = 'swing'; e.st = 0.42; e.fired = false; }
-    }
-    // State: Teleportation (vanishes into violet pillar, appears behind player)
-    else if (e.state === 'teleport') {
-      if (e.st <= 0) {
-        e.x = clamp(player.x - e.face * 48, ARENA_MIN + 30, LEVEL_W - 55);
-        e.face = player.x >= e.x ? 1 : -1;
-        e.state = 'swing';
-        e.st = 0.48;
-        e.fired = false;
-        sfx('slash2');
-        burst(e.x + e.w / 2, e.y + e.h / 2, '#c084fc', 25, 170);
-      }
-    }
-    // State: Tracking Soul Orbs (homing purple projectiles)
-    else if (e.state === 'soul_orbs') {
-      if (e.st <= 0.28 && !e.fired) {
-        e.fired = true;
-        sfx('boom');
-        cam.shake = 5;
-        var count = e.currentPhase === 4 ? 4 : 3;
-        for (var oi = 0; oi < count; oi++) {
-          var oAng = Math.atan2((player.y + 8) - (e.y + 14), dx) + (oi - (count - 1) / 2) * 0.26;
-          projs.push({
-            type: 'soul_orb',
-            x: ecx + e.face * 18,
-            y: e.y + 14,
-            w: 12, h: 12,
-            vx: Math.cos(oAng) * 95,
-            vy: Math.sin(oAng) * 95,
-            homing: true,
-            life: 3.5
-          });
-        }
-        burst(ecx + e.face * 20, e.y + 14, '#c084fc', 12, 120);
-      }
-      if (e.st <= 0) { e.state = 'walk'; e.st = 0.8; }
-    }
-    // State: Whirling Blade Cyclone
-    else if (e.state === 'cyclone') {
-      if (e.st <= 0.35 && !e.fired) {
-        e.fired = true;
-        sfx('blade_throw');
-        cam.shake = 7;
-        for (var bi = 0; bi < 4; bi++) {
-          var bAng = (bi * Math.PI) / 2;
-          projs.push({
-            type: 'cyclone_blade',
-            x: ecx + Math.cos(bAng) * 20,
-            y: e.y + 20 + Math.sin(bAng) * 20,
-            w: 16, h: 16,
-            cx: ecx, cy: e.y + 20,
-            radius: 20, angle: bAng,
-            rotSpd: 6.5, expSpd: 55,
-            life: 2.8
-          });
-        }
-        burst(ecx, e.y + 20, '#e879f9', 15, 140);
-      }
-      if (e.st <= 0) { e.state = 'walk'; e.st = 0.85; }
-    }
-    // State: Crossing X-Slash
-    else if (e.state === 'x_slash') {
-      if (e.st <= 0.32 && !e.fired) {
-        e.fired = true;
-        sfx('slash3');
-        cam.shake = 9;
-        projs.push({
-          type: 'x_slash',
-          x: ecx + e.face * 20, y: e.y + 8,
-          w: 24, h: 24,
-          vx: e.face * 170, vy: -40,
-          life: 2.5
-        });
-        projs.push({
-          type: 'x_slash',
-          x: ecx + e.face * 20, y: e.y + 26,
-          w: 24, h: 24,
-          vx: e.face * 170, vy: 40,
-          life: 2.5
-        });
-        burst(ecx + e.face * 22, e.y + 18, '#ffffff', 8, 160);
-      }
-      if (e.st <= 0) { e.state = 'walk'; e.st = 0.8; }
-    }
-    // State: Large-Scale Ground Shockwave (Demon Maw)
-    else if (e.state === 'demon_maw') {
-      if (e.st <= 0.35 && !e.fired) {
-        e.fired = true;
-        sfx('boom');
-        cam.shake = 16;
-        projs.push({
-          type: 'demon_maw',
-          x: ecx - 16, y: GROUND_Y - 24,
-          w: 32, h: 24,
-          vx: -150, vy: 0,
-          life: 2.6
-        });
-        projs.push({
-          type: 'demon_maw',
-          x: ecx - 16, y: GROUND_Y - 24,
-          w: 32, h: 24,
-          vx: 150, vy: 0,
-          life: 2.6
-        });
-        burst(ecx, GROUND_Y, '#9333ea', 26, 170);
-      }
-      if (e.st <= 0) { e.state = 'walk'; e.st = 0.9; }
-    }
-    // State: Massive Skeleton Army Summon
-    else if (e.state === 'summon_army') {
-      if (e.st <= 0.35 && !e.fired) {
-        e.fired = true;
-        sfx('skel_shield');
-        say('THE SKELETON ARMY RISES!', 1.5);
-        for (var si = 0; si < 2; si++) {
-          var spawnX = clamp(e.x + (si === 0 ? -60 : 60), ARENA_MIN + 25, LEVEL_W - 45);
-          enemies.push(mkSkel(spawnX));
-          burst(spawnX, GROUND_Y, '#9333ea', 16, 140);
-        }
-      }
-      if (e.st <= 0) { e.state = 'walk'; e.st = 0.9; }
-    }
-    // State: Rain of Blades (Vertical Energy Pillars)
-    else if (e.state === 'rain_of_blades') {
-      if (e.st <= 0.5 && !e.fired) {
-        e.fired = true;
-        sfx('laser_fire');
-        cam.shake = 12;
-        var positions = [pcx - 50, pcx, pcx + 50];
-        for (var pi = 0; pi < positions.length; pi++) {
-          var rx = clamp(positions[pi], ARENA_MIN + 20, LEVEL_W - 40);
-          projs.push({
-            type: 'rain_pillar',
-            x: rx, y: 0,
-            w: 24, h: GROUND_Y,
-            vx: 0, vy: 0,
-            life: 0.55
-          });
-          burst(rx, GROUND_Y, '#e879f9', 14, 150);
-        }
-      }
-      if (e.st <= 0) { e.state = 'walk'; e.st = 0.85; }
-    }
-    // State: Void Explosion & Reaper's Judgment
-    else if (e.state === 'void_explosion') {
-      if (e.st <= 0.45 && !e.fired) {
-        e.fired = true;
-        sfx('boom');
-        cam.shake = 22;
-        say("REAPER'S JUDGMENT!", 1.6);
-        // Colossal Void Nova Burst
-        burst(ecx, e.y + 20, '#d946ef', 50, 240);
-        burst(ecx, e.y + 20, '#ffffff', 30, 200);
-        // Reaper's Flame Wave surging across floor
-        projs.push({
-          type: 'reaper_flame',
-          x: ecx, y: GROUND_Y - 26,
-          w: 36, h: 26,
-          vx: e.face * 180, vy: 0,
-          life: 2.5
-        });
-      }
-      if (e.st <= 0) { e.state = 'walk'; e.st = 0.95; }
-    }
-    // State: Eternal Beam (Colossal Horizontal Purple Laser)
-    else if (e.state === 'laser') {
-      e.laserTimer -= dt;
-      if (e.laserState === 'telegraph') {
-        if (Math.random() < 0.6) {
-          parts.push({
-            x: ecx + e.face * 12 + rnd(-4, 4), y: e.y + 16 + rnd(-4, 4),
-            vx: -e.face * rnd(10, 30), vy: rnd(-10, 10),
-            life: 0.2, max: 0.2, c: '#e879f9', s: 2, g: 0
-          });
-        }
-        if (e.laserTimer <= 0) {
-          e.laserState = 'beam';
-          e.laserTimer = 0.42;
-          sfx('laser_fire');
-          cam.shake = 12;
-        }
-      } else if (e.laserState === 'beam') {
-        cam.shake = Math.max(cam.shake, 6);
-        var beamY = e.y + 12;
-        var bMinX = e.face > 0 ? ecx + 8 : ARENA_MIN + 4;
-        var bMaxX = e.face > 0 ? (LEVEL_W - 10) : ecx - 8;
-        var bBox = { x: bMinX, y: beamY - 10, w: Math.max(10, bMaxX - bMinX), h: 20 };
-        if (!player.dead && overlap(bBox, player)) {
-          var facingBeam = (player.face > 0 && ecx >= player.x) || (player.face < 0 && ecx <= player.x + player.w);
-          if (player.shielding && facingBeam) {
-            if (!player.laserBlockCooldown || player.laserBlockCooldown <= 0) {
-              player.laserBlockCooldown = 0.14;
-              player.shieldStamina = Math.max(0, player.shieldStamina - 14);
-              player.shieldBlockFlash = 0.20;
-              player.vx = -player.face * 45;
-              sfx('shield_block');
-              cam.shake = 5;
-              var shieldX = player.x + (player.face > 0 ? player.w + 6 : -6);
-              burst(shieldX, bBox.y + 10, '#c084fc', 8, 160, 0, 2);
-              burst(shieldX, bBox.y + 10, '#ffffff', 6, 200, 0, 1.5);
-              if (player.shieldStamina <= 0) {
-                player.shielding = false;
-                player.shieldCd = 2.0;
-                sfx('shield_break');
-                say('SHIELD BROKEN!', 1.2);
-              }
-            }
-          } else {
-            damagePlayer(1, ecx);
-          }
-        }
-        if (Math.random() < 0.7) {
-          parts.push({
-            x: rnd(bMinX, bMaxX), y: beamY + rnd(-6, 6),
-            vx: rnd(-20, 20), vy: rnd(-25, 10),
-            life: 0.25, max: 0.25, c: Math.random() < 0.5 ? '#e879f9' : '#ffffff', s: 2, g: 0
-          });
-        }
-        if (e.laserTimer <= 0) {
-          e.laserState = 'none';
-          e.state = 'walk';
-          e.st = 0.9;
-        }
-      }
-    }
-    // State: Wing Hover & Wing Gust
-    else if (e.state === 'hover') {
-      e.y += (e.targetHoverY - e.y) * Math.min(1, dt * 5);
-      e.vx = e.face * 35;
-      e.x += e.vx * dt;
-      e.gustTimer += dt;
-      if (Math.abs(dx) < 220) {
-        player.vx -= e.face * 130 * dt;
-        if (Math.random() < 0.4) {
-          parts.push({
-            x: ecx + e.face * rnd(10, 40), y: e.y + 20 + rnd(-10, 10),
-            vx: e.face * rnd(120, 220), vy: rnd(-10, 10),
-            life: 0.3, max: 0.3, c: '#c084fc', s: 2, g: 0
-          });
-        }
-      }
-      if (e.st <= 1.1) {
-        e.state = 'swoop';
-        e.swoopT = 0;
-        e.swoopStartX = e.x;
-        e.swoopTargetX = clamp(pcx + e.face * 70, ARENA_MIN + 25, LEVEL_W - 65);
-        sfx('wing_flap');
-      }
-    }
-    // State: Swoop Dive Attack
-    else if (e.state === 'swoop') {
-      e.swoopT += dt * 1.6;
-      var prog = clamp(e.swoopT, 0, 1);
-      e.x = (1 - prog) * e.swoopStartX + prog * e.swoopTargetX;
-      e.y = (GROUND_Y - 95) + Math.sin(prog * Math.PI) * 75;
-      if (prog > 0.3 && prog < 0.7) {
-        var sBox = { x: e.x + 4, y: e.y + 12, w: e.w - 8, h: e.h - 14 };
-        if (overlap(sBox, player)) damagePlayer(1, ecx);
-      }
-      if (prog >= 1) {
-        e.y = GROUND_Y - e.h;
-        e.onGround = true;
-        e.state = 'walk';
-        e.st = 1.0;
-        addDust(e.x + 14, GROUND_Y, -e.face, 6);
-      }
-    }
-    // State: Melee Cleave
-    else if (e.state === 'swing') {
-      if (e.st <= 0.32 && e.st > 0.08) {
-        if (!e.fired) {
-          e.fired = true;
-          sfx('slash3');
-          cam.shake = Math.max(cam.shake, 5);
-        }
-        e.x += e.face * 60 * dt;
-        var hb = {
-          x: e.face > 0 ? e.x + e.w - 6 : e.x - 52,
-          y: e.y + 8,
-          w: 56,
-          h: 36
-        };
-        if (overlap(hb, player)) damagePlayer(1, ecx);
-      }
-      if (e.st <= 0) {
-        e.state = 'walk';
-        e.st = e.currentPhase === 4 ? 0.5 : 0.8;
-      }
-    }
-
-    if (e.state !== 'hover' && e.state !== 'swoop') {
-      groundPhysics(e, dt);
-    }
-    e.x = clamp(e.x, ARENA_MIN + 4, LEVEL_W - e.w - 4);
+    e.update(dt);
+    updateBossWorld(dt);
   }
 
   /* ---------- main update loop ---------- */
@@ -3876,163 +3918,167 @@ const BG_IMG = new Image();
      - Spectral Void Aegis (Shield) & Hurt Stagger
      ========================================================= */
   function drawSkeletonKing(e, x, y) {
-    var phase = e.currentPhase || 2;
     var atlas = ATLAS_DATA.boss2;
     var hasAtlas = atlas && REVIVED_BOSS_IMG && (REVIVED_BOSS_IMG.naturalWidth > 0 || REVIVED_BOSS_IMG.width > 0);
 
-    if (!hasAtlas) {
-      drawProceduralSkeletonKing(e, x, y);
-      return;
+    // 1. Render G.zones with camera offset
+    for (const z of G.zones) {
+      const k = z.t > 0 ? 1 - z.t / z.max : 1;
+      ctx.save();
+      ctx.globalAlpha = z.t > 0 ? 0.15 + 0.35 * k : 0.7;
+      ctx.fillStyle = z.col;
+      var zx = Math.round(z.x - camX);
+      if (z.pillar) {
+        ctx.fillRect(zx - z.r, 0, z.r * 2, GROUND_Y);
+      } else {
+        ctx.beginPath();
+        ctx.arc(zx, z.y, z.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = z.col;
+      ctx.lineWidth = 1.5;
+      if (!z.pillar && z.t > 0) {
+        ctx.beginPath();
+        ctx.arc(zx, z.y, z.r * k, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // 2. Render G.beams with camera offset
+    for (const b of G.beams) {
+      ctx.save();
+      ctx.translate(Math.round(b.o.x - camX), Math.round(b.o.cy));
+      ctx.rotate(b.ang);
+      const on = b.t > b.tele;
+      ctx.fillStyle = on ? '#ff80ff' : 'rgba(255, 80, 255, 0.35)';
+      ctx.shadowColor = '#d946ef';
+      ctx.shadowBlur = on ? 24 : 8;
+      ctx.fillRect(0, on ? -10 : -2, 800, on ? 20 : 4);
+      ctx.restore();
+    }
+
+    // 3. Render G.proj with camera offset
+    for (const p of G.proj) {
+      ctx.save();
+      var px = Math.round(p.x - camX), py = Math.round(p.y);
+      ctx.translate(px, py);
+      ctx.globalAlpha = p.warn > 0 ? 0.3 : 1;
+      if (p.warn > 0 && p.kind === 'blade') {
+        ctx.fillStyle = '#e0e0ff';
+        ctx.fillRect(-1, 0, 2, GROUND_Y);
+      }
+      ctx.fillStyle = p.col;
+      if (p.kind === 'blade') {
+        ctx.rotate(Math.atan2(p.vy || 1, p.vx));
+        ctx.fillRect(-8, -2, 16, 4);
+      } else if (p.kind === 'ghost') {
+        ctx.fillStyle = 'rgba(190, 120, 255, 0.65)';
+        ctx.fillRect(-8, -25, 16, 35);
+        ctx.beginPath();
+        ctx.arc(0, -30, 8, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'wave') {
+        ctx.fillStyle = p.col || '#c084fc';
+        ctx.beginPath();
+        ctx.arc(0, 0, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, p.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, p.r / 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // 4. Render G.fx particles
+    for (const f of G.fx) {
+      ctx.save();
+      ctx.globalAlpha = clamp(f.life * 2, 0, 1);
+      ctx.fillStyle = f.col;
+      ctx.fillRect(Math.round(f.x - camX), Math.round(f.y), f.r, f.r);
+      ctx.restore();
+    }
+
+    // 5. Render Telegraph Indicator Box
+    if (e.tele && e.tele.box) {
+      const [bx, by, bw, bh] = e.tele.box;
+      const k = 1 - e.tele.t / e.tele.max;
+      ctx.save();
+      ctx.fillStyle = e.tele.col;
+      ctx.globalAlpha = 0.12 + 0.3 * k;
+      ctx.fillRect(Math.round(bx - bw / 2 - camX), Math.round(by - bh / 2), bw, bh);
+      ctx.strokeStyle = e.tele.col;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(Math.round(bx - bw / 2 - camX), Math.round(by - bh / 2), bw, bh);
+      ctx.restore();
+    }
+
+    // 6. Draw Boss Sprite & Auras
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.globalAlpha = e.vis;
+    if (e.flash > 0) ctx.filter = 'brightness(2.2)';
+
+    // Telegraph Flashing Exclamation Indicator
+    if (e.tele) {
+      ctx.fillStyle = e.tele.col;
+      ctx.globalAlpha = 0.25 + 0.25 * Math.sin(G.t * 30);
+      ctx.beginPath();
+      ctx.arc(0, -32, 35 + 5 * Math.sin(G.t * 30), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = e.vis;
+      ctx.fillStyle = e.tele.col;
+      ctx.font = 'bold 18px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', 0, -68);
+    }
+
+    // Phase 4 Violet Flames Radial Aura
+    if (e.phase >= 4) {
+      const g = ctx.createRadialGradient(0, -35, 3, 0, -35, 26 + 4 * Math.sin(G.t * 9));
+      g.addColorStop(0, '#ffffff');
+      g.addColorStop(0.4, '#d946ef');
+      g.addColorStop(1, 'rgba(217, 70, 239, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(-35, -65, 70, 70);
     }
 
     var frName = 'form_2_winged';
     var SCALE = 0.42;
-    var bobY = 0;
-    var tilt = 0;
-    var shadowCol = '#9333ea';
-    var shadowBlurAmt = 14;
 
-    // Phase 4: Awakened Demon of Violet Flames
-    if (phase === 4) {
+    if (e.phase === 1) {
+      frName = e.anim === 'slash' ? 'armored_crescent_slash' : (e.anim === 'heavy' ? 'armored_heavy_cleave' : (e.anim === 'stomp' ? 'armored_stomp_crouch' : (e.anim === 'block' ? 'armored_shield_block' : (e.anim === 'walk' ? 'armored_march' : 'armored_stance'))));
+    } else if (e.phase === 2) {
+      frName = e.anim === 'fly' ? 'winged_fly_hover' : (e.anim === 'slash' ? 'winged_sky_drop' : (e.anim === 'teleport' ? 'winged_teleport_pillar' : 'form_2_winged'));
+    } else if (e.phase === 3) {
+      frName = e.anim === 'slash' ? 'crossing_x_slash' : (e.anim === 'cast' ? 'whirling_blade_cyclone' : 'form_3_awakened');
+      SCALE = 0.38;
+    } else {
       frName = 'form_4_ultimate';
       SCALE = 0.36;
-      shadowCol = '#d946ef';
-      shadowBlurAmt = 22 + Math.sin(t * 12) * 8;
-      bobY = Math.sin(t * 8) * 2;
-    }
-    // Phase 3: Awakened Demon / Blade Barrage
-    else if (phase === 3) {
-      frName = 'form_3_awakened';
-      SCALE = 0.38;
-      shadowCol = '#a855f7';
-      shadowBlurAmt = 16 + Math.sin(t * 8) * 6;
-      bobY = Math.sin(t * 6) * 1.5;
-    }
-    // Phase 2: Winged Skeletal Demon
-    else {
-      frName = 'form_2_winged';
-      SCALE = 0.42;
-      shadowCol = '#c084fc';
-      shadowBlurAmt = 14 + Math.sin(t * 5) * 4;
-      bobY = Math.sin(t * 5) * 1.5;
     }
 
-    // Specific attack states override
-    if (e.flash > 0) {
-      tilt = (e.face > 0 ? -0.06 : 0.06);
-    } else if (e.state === 'shadow_dash') {
-      frName = 'winged_shadow_dash';
-      SCALE = 0.42;
-      tilt = (e.face > 0 ? 0.08 : -0.08);
-      bobY = 0;
-    } else if (e.state === 'hover') {
-      frName = 'winged_fly_hover';
-      bobY = Math.sin((e.wingTimer || 0) * 8) * 3;
-    } else if (e.state === 'swoop') {
-      frName = 'winged_dive_bomb';
-      tilt = (e.face > 0 ? 0.12 : -0.12);
-    } else if (e.state === 'teleport') {
-      frName = 'winged_teleport_pillar';
-      SCALE = 0.45;
-    } else if (e.state === 'cyclone') {
-      frName = 'whirling_blade_cyclone';
-      SCALE = 0.38;
-      bobY = Math.sin(t * 16) * 2;
-    } else if (e.state === 'x_slash') {
-      frName = 'crossing_x_slash';
-      SCALE = 0.40;
-    } else if (e.state === 'demon_maw') {
-      frName = 'demon_maw_shockwave';
-      SCALE = 0.38;
-    } else if (e.state === 'summon_army') {
-      frName = 'sword_magic_thrust';
-      SCALE = 0.40;
-    } else if (e.state === 'void_explosion') {
-      frName = 'void_explosion_nova';
-      SCALE = 0.42;
-      bobY = Math.sin(t * 20) * 3;
-    } else if (e.state === 'laser') {
-      if (e.laserState === 'telegraph') {
-        frName = 'astral_wheel';
-        SCALE = 0.42;
-        bobY = Math.sin(t * 16) * 2;
-      } else {
-        frName = phase === 4 ? 'form_4_ultimate' : 'form_3_awakened';
-      }
-    }
+    var fr = (atlas && atlas[frName]) || (atlas && atlas['form_2_winged']) || { x: 0, y: 0, w: 40, h: 50, ox: 20, oy: 50 };
 
-    var fr = atlas[frName] || atlas['form_2_winged'] || atlas['idle_0'];
-
-    ctx.save();
-    ctx.translate(x + Math.round(e.w / 2), y + e.h + bobY);
     ctx.scale(e.face * SCALE, SCALE);
-    if (tilt) ctx.rotate(tilt);
+    ctx.shadowColor = e.ps.col;
+    ctx.shadowBlur = 14 + Math.sin(t * 8) * 6;
 
-    ctx.shadowColor = shadowCol;
-    ctx.shadowBlur = shadowBlurAmt;
-
-    ctx.drawImage(
-      REVIVED_BOSS_IMG,
-      fr.x, fr.y, fr.w, fr.h,
-      -Math.round(fr.ox), -Math.round(fr.oy),
-      fr.w, fr.h
-    );
-
-    // Render Astral Summon Seal when charging Void Explosion
-    if (e.state === 'void_explosion') {
-      var sealFr = atlas['astral_summon_seal'];
-      if (sealFr) {
-        ctx.save();
-        ctx.translate(0, 0);
-        ctx.scale(1.2, 0.4);
-        ctx.rotate(t * 4);
-        ctx.shadowColor = '#d946ef';
-        ctx.shadowBlur = 24;
-        ctx.drawImage(REVIVED_BOSS_IMG, sealFr.x, sealFr.y, sealFr.w, sealFr.h, -sealFr.ox, -sealFr.oy, sealFr.w, sealFr.h);
-        ctx.restore();
-      }
-    }
-
-    // Render Colossal Horizontal Eternal Beam
-    if (e.state === 'laser' && e.laserState === 'beam') {
-      var bFr = atlas['eternal_beam'] || atlas['laser_beam'];
-      if (bFr) {
-        var beamW = 540 / SCALE;
-        var beamH = bFr.h * 1.45;
-        var beamX = 25;
-        var beamY = -fr.oy * 0.55;
-        ctx.save();
-        ctx.shadowColor = '#e879f9';
-        ctx.shadowBlur = 30;
-        ctx.drawImage(
-          REVIVED_BOSS_IMG,
-          bFr.x, bFr.y, bFr.w, bFr.h,
-          beamX, beamY - beamH / 2,
-          beamW, beamH
-        );
-        ctx.restore();
-      }
-    }
-
-    // Render Runic Bone Shield Barrier
-    if (e.shieldActive) {
-      var shFr = atlas['runic_bone_shield'];
-      ctx.save();
-      ctx.shadowColor = e.shieldFlash > 0 ? '#ffffff' : '#e879f9';
-      ctx.shadowBlur = e.shieldFlash > 0 ? 25 : 15;
-      if (shFr) {
-        var shW = shFr.w * 1.1;
-        var shH = shFr.h * 1.1;
-        ctx.drawImage(REVIVED_BOSS_IMG, shFr.x, shFr.y, shFr.w, shFr.h, -shFr.ox * 1.1, -shFr.oy * 1.1, shW, shH);
-      }
-      ctx.strokeStyle = '#c084fc';
-      ctx.lineWidth = 3 / SCALE;
-      ctx.beginPath();
-      ctx.arc(0, -fr.oy * 0.45, (fr.w * 0.38), 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(168, 85, 247, 0.18)';
-      ctx.fill();
-      ctx.restore();
+    if (hasAtlas) {
+      ctx.drawImage(
+        REVIVED_BOSS_IMG,
+        fr.x, fr.y, fr.w, fr.h,
+        -Math.round(fr.ox), -Math.round(fr.oy),
+        fr.w, fr.h
+      );
+    } else {
+      R(-20, -50, 40, 50, e.ps.col);
     }
 
     ctx.restore();
@@ -4558,33 +4604,30 @@ function drawResurrectionCutscene(camX) {
       R(bx - 2, by - 2, bw + 4, 10, '#351545');
       R(bx, by, bw, 6, '#13061c');
 
-      var catchUpW = Math.round(bw * (boss2.displayHp || boss2.hp) / boss2.maxhp);
+      var catchUpW = Math.round(bw * (boss2.displayHp || boss2.hp) / boss2.hpMax);
       R(bx, by, catchUpW, 6, '#ffffff');
 
-      var hpW = Math.round(bw * boss2.hp / boss2.maxhp);
-      R(bx, by, hpW, 6, '#9333ea');
-      R(bx, by, hpW, 2, '#c026d3');
+      var hpW = Math.round(bw * boss2.hp / boss2.hpMax);
+      var barCol = (boss2.ps && boss2.ps.col) || '#9333ea';
+      R(bx, by, hpW, 6, barCol);
+      R(bx, by, hpW, 2, '#ffffff');
 
       R(bx - 4, by - 1, 3, 8, '#f5c452');
       R(bx + bw + 1, by - 1, 3, 8, '#f5c452');
 
-      var bTitle = 'THE SKELETON DEMON - PHASE II';
-      if (boss2.currentPhase === 4 || boss2.hp <= 12) {
-        bTitle = 'THE SKELETON KING - PHASE IV: AWAKENED DEMON';
-      } else if (boss2.currentPhase === 3 || boss2.hp <= 24) {
-        bTitle = 'THE SKELETON KING - PHASE III: BLADE BARRAGE';
+      // Phase threshold markers (0.75, 0.5, 0.25)
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      for (const tAt of [0.75, 0.5, 0.25]) {
+        ctx.fillRect(bx + Math.round(bw * tAt) - 1, by - 1, 2, 8);
       }
+
+      var bTitle = (boss2.ps && boss2.ps.name) ? `${boss2.ps.name}  -  PHASE ${boss2.phase}` : 'THE SKELETON KING';
       txt(bTitle, W / 2, by - 12, '#f5c452', 8, 'center', '#4a044e');
 
-      if (boss2.shieldActive) {
-        var shbW = Math.round(bw * (boss2.shieldHp / boss2.maxShieldHp));
-        R(bx, by - 5, bw, 2, '#14111d');
-        R(bx, by - 5, shbW, 2, '#dfd5bd');
-        txt('BONE SHIELD ACTIVE', W / 2, by - 20, '#e9d5ff', 6, 'center');
-      } else if (boss2.staggerTimer > 0) {
-        txt('STAGGERED!', W / 2, by - 20, '#ff4444', 6, 'center');
-      } else if (boss2.enraged) {
-        txt('ENRAGED', W / 2, by - 20, '#ef4444', 6, 'center', '#450a0a');
+      if (boss2.block) {
+        txt('GUARD ACTIVE', W / 2, by - 20, '#e9d5ff', 6, 'center');
+      } else if (boss2.lastStand) {
+        txt('LAST STAND: ENRAGED!', W / 2, by - 20, '#ff3cf0', 6, 'center', '#450a0a');
       }
     }
 
