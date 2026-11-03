@@ -4,8 +4,9 @@ screenshots
 *.orig.png
 *test*.png
 *.gif
+*.py
+*.bak
 dipkiss_*.png
-update_ending_assets.py
 bottom_section.png
 hurt_death_row.png
 row_310_430.png
