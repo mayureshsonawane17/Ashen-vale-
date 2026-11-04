@@ -709,6 +709,14 @@ const BG_IMG = new Image();
           say('DEBUG: SKELETON KING KILLED', 1.0);
         }
       }
+      if (e.code === 'KeyB') {
+        if (player && !player.dead) {
+          player.shieldCharge = 6;
+          player.shieldHp = 0;
+          triggerHeroShieldBreak(player);
+          say('DEBUG: SHIELD SHATTERED → SHOCKWAVE', 1.2);
+        }
+      }
     }
     if (/^Digit[1-4]$/.test(e.code) && boss2) {
       boss2.debugPhase(+e.code[5]);
@@ -794,6 +802,7 @@ const BG_IMG = new Image();
 
   var embers = [];
   for (var ei = 0; ei < 32; ei++) embers.push({ x: Math.random() * W, y: Math.random() * H, sp: rnd(10, 28), ph: rnd(0, 6), s: Math.random() < 0.35 ? 2 : 1 });
+  var heroShockwaves = [];
 
   function makePlayer(x) {
     return {
@@ -801,6 +810,7 @@ const BG_IMG = new Image();
       coyote: 0, jumpBuf: 0, jumps: 0, atk: 0, atkCd: 0, swing: 0, comboStep: 0, lastSwingTime: 0,
       dash: 0, dashCd: 0, inv: 0, blink: 0, hurt: 0, anim: 0, dead: false, wasOnGround: false, ghostTimer: 0, landAnim: 0,
       shielding: false, shieldTime: 0, shieldStamina: 100, maxShieldStamina: 100, shieldCd: 0, shieldBlockFlash: 0,
+      shieldHp: 6, shieldMax: 6, shieldCharge: 0, shieldBrokenTimer: 0,
       parryFlash: 0, shieldBash: 0, shieldHitCooldown: 0, laserBlockCooldown: 0,
       shootCd: 0, shootAnim: 0, hitEnemies: new Set(), stepTimer: 0
     };
@@ -1328,7 +1338,7 @@ const BG_IMG = new Image();
       if (!h.done && overlap(h, player)) {
         h.done = 1;
         var facing = (player.face > 0 && h.from >= player.x) || (player.face < 0 && h.from <= player.x + player.w);
-        if (player.shielding && facing) {
+        if (player.shielding && facing && player.shieldHp > 0 && player.shieldBrokenTimer <= 0) {
           var isParry = (player.shieldTime !== undefined && player.shieldTime <= 0.22);
           if (isParry) {
             hitstop = 0.08;
@@ -1338,11 +1348,7 @@ const BG_IMG = new Image();
             say('PARRY!', 0.8);
             if (boss2.block) boss2.countered = true;
           } else {
-            player.shieldStamina = Math.max(0, player.shieldStamina - 8);
-            player.shieldBlockFlash = 0.18;
-            player.vx = -player.face * 35;
-            sfx('shield_block');
-            burst(player.x + (player.face > 0 ? player.w + 6 : -6), player.y + 16, '#38bdf8', 10, 110, 0, 1.5);
+            damagePlayer(1, h.from, 3);
           }
         } else {
           damagePlayer(1, h.from);
@@ -1371,7 +1377,7 @@ const BG_IMG = new Image();
       var prBox = { x: p.x - p.r, y: p.y - p.r, w: p.r * 2, h: p.r * 2 };
       if (!player.dead && overlap(prBox, player)) {
         var facingProj = (player.face > 0 && p.x >= player.x) || (player.face < 0 && p.x <= player.x + player.w);
-        if (player.shielding && facingProj) {
+        if (player.shielding && facingProj && player.shieldHp > 0 && player.shieldBrokenTimer <= 0) {
           var isParry = (player.shieldTime !== undefined && player.shieldTime <= 0.22);
           if (isParry) {
             p.life = 0;
@@ -1389,7 +1395,7 @@ const BG_IMG = new Image();
             burst(p.x, p.y, '#f5c452', 18, 180, 0, 2.5);
             say('DEFLECTED!', 0.8);
           } else {
-            damagePlayer(1, p.x);
+            damagePlayer(1, p.x, 2);
             p.life = 0;
             burst(p.x, p.y, '#38bdf8', 10, 110, 0, 1.5);
           }
@@ -1429,16 +1435,10 @@ const BG_IMG = new Image();
         var dDist = Math.hypot(px - dx * tDot, py - dy * tDot);
         if (dDist < 16) {
           var facingBeam = (player.face > 0 && b.o.x >= player.x) || (player.face < 0 && b.o.x <= player.x + player.w);
-          if (player.shielding && facingBeam) {
+          if (player.shielding && facingBeam && player.shieldHp > 0 && player.shieldBrokenTimer <= 0) {
             if (!player.laserBlockCooldown || player.laserBlockCooldown <= 0) {
               player.laserBlockCooldown = 0.14;
-              player.shieldStamina = Math.max(0, player.shieldStamina - 12);
-              player.shieldBlockFlash = 0.20;
-              player.vx = -player.face * 45;
-              sfx('shield_block');
-              cam.shake = 5;
-              var shieldX = player.x + (player.face > 0 ? player.w + 6 : -6);
-              burst(shieldX, player.y - 14, '#c084fc', 8, 160, 0, 2);
+              damagePlayer(1, b.o.x, 3);
             }
           } else {
             damagePlayer(1, b.o.x);
@@ -1482,6 +1482,7 @@ function buildWorld() {
     resurrectionPhase = 0;
     stolenHeartTrail = [];
     hudHeartFlash = 0;
+    heroShockwaves = [];
     G.hit = []; G.proj = []; G.zones = []; G.beams = []; G.mins = []; G.fx = []; G.t = 0; G.shake = 0;
     buildWorld();
     player = makePlayer(40);
@@ -1491,11 +1492,13 @@ function buildWorld() {
     playMusic('explore');
   }
   function respawn() {
+    heroShockwaves = [];
     if (skeletonKingCheckpoint) {
       player = makePlayer(3100);
       player.maxhp = 5;
       player.hp = 4; // Retrying Skeleton King with 4 hearts to match the stolen heart story
       player.inv = 1.5; player.blink = 1.5;
+      player.shieldHp = 6; player.shieldMax = 6; player.shieldCharge = 0; player.shieldBrokenTimer = 0; player.shielding = false;
       enemies = enemies.filter(function (e) { return e.type !== 'boss' && e.type !== 'boss2'; });
       boss2 = mkSkeletonKing(3360, GROUND_Y - 58);
       boss2.st = 1.2;
@@ -1516,6 +1519,7 @@ function buildWorld() {
     } else {
       player = makePlayer(checkpointX);
       player.inv = 1.5; player.blink = 1.5;
+      player.shieldHp = 6; player.shieldMax = 6; player.shieldCharge = 0; player.shieldBrokenTimer = 0; player.shielding = false;
       if (boss && boss.hp > 0) {
         var i = enemies.indexOf(boss);
         if (i >= 0) enemies.splice(i, 1);
@@ -1585,13 +1589,186 @@ function buildWorld() {
   }
 
   /* ---------- damage system ---------- */
-  function damagePlayer(d, fromX) {
+  function triggerHeroShieldBreak(p) {
+    if (!p) p = player;
+    if (!p) return;
+
+    var charge = Math.max(0, p.shieldCharge || 0);
+    p.shieldHp = 0;
+    p.shieldStamina = 0;
+    p.shielding = false;
+    p.shieldBrokenTimer = 6.0;
+    p.shieldCd = 6.0;
+
+    // Don't hurt the player, and give brief invincibility (~0.5s)
+    p.inv = Math.max(p.inv, 0.5);
+    p.blink = Math.max(p.blink, 0.5);
+
+    // Screen shake & hitstop
+    cam.shake = Math.max(cam.shake, 14 + Math.min(8, charge * 1.2));
+    hitstop = 0.08;
+
+    // Sound effects: shatter tone + sfx
+    sfx('shield_break');
+    tone(1600, 0.12, 'square', 0.08, -500);
+    tone(2200, 0.09, 'sawtooth', 0.07, -700, 0.02);
+    tone(90, 0.35, 'triangle', 0.10, -40);
+
+    // Glass-like particle burst
+    var bx = p.x + (p.face > 0 ? p.w + 6 : -6);
+    var by = p.y + 11;
+    burst(bx, by, '#38bdf8', 22, 210, 0, 3.5);
+    burst(bx, by, '#ffffff', 18, 240, 0, 2.5);
+    burst(bx, by, '#7dd3fc', 16, 180, 0, 3.0);
+    if (charge >= 3) {
+      burst(bx, by, '#f5c452', 16, 220, 0, 3.0);
+    }
+
+    // Shockwave parameters scaled with shieldCharge
+    // More absorbed damage = bigger radius (capped), more damage (1 to 3), more knockback
+    var maxR = clamp(75 + charge * 14, 75, 160);
+    var dmg = clamp(1 + Math.floor(charge / 2.5), 1, 3);
+    var col = charge >= 5 ? '#f5c452' : (charge >= 2.5 ? '#ffffff' : '#38bdf8');
+
+    heroShockwaves.push({
+      x: p.x + p.w / 2,
+      y: p.y + p.h / 2,
+      r: 0,
+      maxR: maxR,
+      timer: 0,
+      dur: 0.40,
+      dmg: dmg,
+      charge: charge,
+      col: col,
+      hitSet: new Set()
+    });
+
+    say('SHIELD SHATTERED! SHOCKWAVE!', 1.4);
+    p.shieldCharge = 0; // charge has discharged into the shockwave
+  }
+
+  function updateShockwaves(dt) {
+    for (var si = heroShockwaves.length - 1; si >= 0; si--) {
+      var sw = heroShockwaves[si];
+      sw.timer += dt;
+      var progress = Math.min(1, sw.timer / sw.dur);
+      sw.r = sw.maxR * progress;
+
+      // 1. Destroy hostile projectiles in radius ('fire', 'wave', etc.)
+      for (var pi = 0; pi < projs.length; pi++) {
+        var pr = projs[pi];
+        if (pr.life > 0 && pr.type !== 'reflected_shot' && pr.type !== 'naks_shot') {
+          var prx = pr.x + (pr.w || 8) / 2;
+          var pry = pr.y + (pr.h || 8) / 2;
+          var prDist = Math.hypot(prx - sw.x, pry - sw.y);
+          if (prDist <= sw.r + 14) {
+            pr.life = 0;
+            burst(prx, pry, '#38bdf8', 10, 130);
+            burst(prx, pry, '#ffffff', 5, 160);
+          }
+        }
+      }
+      // Destroy boss2 G.proj
+      if (typeof G !== 'undefined' && G.proj) {
+        for (var gi = 0; gi < G.proj.length; gi++) {
+          var gp = G.proj[gi];
+          if (gp.life > 0) {
+            var gpDist = Math.hypot(gp.x - sw.x, gp.y - sw.y);
+            if (gpDist <= sw.r + 14) {
+              gp.life = 0;
+              burst(gp.x, gp.y, '#c084fc', 8, 120);
+            }
+          }
+        }
+      }
+
+      // 2. Damage and knock back enemies in radius (including bosses and flying bats)
+      for (var ei = 0; ei < enemies.length; ei++) {
+        var em = enemies[ei];
+        if (em.dead || sw.hitSet.has(em)) continue;
+        var emcx = em.x + em.w / 2;
+        var emcy = em.y + em.h / 2;
+        var dist = Math.hypot(emcx - sw.x, emcy - sw.y);
+        if (dist <= sw.r + Math.max(em.w, em.h) / 2) {
+          sw.hitSet.add(em);
+          var dirx = emcx >= sw.x ? 1 : -1;
+          var isBoss = (em.type === 'boss' || em.type === 'boss2');
+
+          damageEnemy(em, sw.dmg, dirx, true); // true = isSpecial, bypasses normal guard
+
+          if (isBoss) {
+            em.vx = dirx * (25 + Math.min(35, sw.charge * 5));
+            em.kb = 0.12;
+            em.flash = 0.28;
+            em.x = clamp(em.x, ARENA_MIN + 10, LEVEL_W - em.w - 10);
+          } else {
+            em.vx = dirx * (140 + Math.min(120, sw.charge * 20));
+            em.kb = 0.35;
+            em.flash = 0.30;
+            if (em.type === 'bat') {
+              em.vy = -75;
+            }
+          }
+          burst(emcx, emcy, sw.col, 12, 160);
+        }
+      }
+
+      if (sw.timer >= sw.dur) {
+        heroShockwaves.splice(si, 1);
+      }
+    }
+  }
+
+  function drawShockwaves(camX) {
+    if (!heroShockwaves || heroShockwaves.length === 0) return;
+    for (var i = 0; i < heroShockwaves.length; i++) {
+      var sw = heroShockwaves[i];
+      var swx = Math.round(sw.x - camX);
+      var swy = Math.round(sw.y);
+      var prog = clamp(sw.timer / sw.dur, 0, 1);
+      var alpha = (1 - prog);
+
+      ctx.save();
+      ctx.shadowBlur = Math.round(14 * alpha);
+      ctx.shadowColor = sw.col;
+
+      // Outer expanding ring
+      ctx.strokeStyle = sw.col;
+      ctx.lineWidth = Math.max(1, 3.5 * alpha);
+      ctx.globalAlpha = Math.max(0, 0.9 * alpha);
+      ctx.beginPath();
+      ctx.arc(swx, swy, Math.round(sw.r), 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Inner resonant ring
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, 2.0 * alpha);
+      ctx.globalAlpha = Math.max(0, 0.75 * alpha);
+      ctx.beginPath();
+      ctx.arc(swx, swy, Math.round(sw.r * 0.72), 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Flash wave center
+      if (prog < 0.3) {
+        var coreProg = 1 - (prog / 0.3);
+        ctx.fillStyle = sw.col;
+        ctx.globalAlpha = 0.35 * coreProg;
+        ctx.beginPath();
+        ctx.arc(swx, swy, Math.round(sw.r * 0.45), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+  }
+
+  function damagePlayer(d, fromX, absorbCost) {
     var p = player;
     if (p.inv > 0 || p.dash > 0 || p.dead || state === 'resurrection' || state === 'ending' || winTimer > 0 || (bossDefeated && bossDefeated.isKing)) return false;
 
     // Check Hero Shield block & Perfect Parry
     var facingAttack = (p.face > 0 && fromX >= p.x) || (p.face < 0 && fromX <= p.x + p.w);
-    if (p.shielding && facingAttack) {
+    if (p.shielding && facingAttack && p.shieldHp > 0 && p.shieldBrokenTimer <= 0) {
       if (p.shieldHitCooldown > 0) return false;
       p.shieldHitCooldown = 0.12;
 
@@ -1599,7 +1776,9 @@ function buildWorld() {
       if (isParry) {
         // --- PERFECT PARRY ---
         p.parryFlash = 0.28;
-        p.shieldStamina = Math.min(p.maxShieldStamina, p.shieldStamina + 15);
+        p.shieldHp = Math.min(p.shieldMax, p.shieldHp + 1);
+        p.shieldCharge = (p.shieldCharge || 0) + 1;
+        p.shieldStamina = (p.shieldHp / p.shieldMax) * 100;
         p.vx = -p.face * 20;
         hitstop = 0.08;
         cam.shake = 8;
@@ -1632,17 +1811,26 @@ function buildWorld() {
       }
 
       // --- STANDARD BLOCK ---
-      p.shieldStamina = Math.max(0, p.shieldStamina - 16);
-      p.shieldBlockFlash = 0.18;
-      p.vx = -p.face * 65;
-      cam.shake = 4;
+      // Determine absorption cost: boss/laser = 3, fire/wave = 2, weak mob = 1
+      var cost = absorbCost !== undefined ? absorbCost : (d >= 2 || (bossActive && (boss || boss2) && Math.abs(fromX - (boss ? boss.x : boss2.x)) < 120) ? 3 : 1);
+
+      p.shieldHp -= cost;
+      p.shieldCharge = (p.shieldCharge || 0) + cost;
+      p.shieldStamina = Math.max(0, (p.shieldHp / p.shieldMax) * 100);
+      p.shieldBlockFlash = 0.22;
+      p.vx = -p.face * (45 + cost * 10);
+      cam.shake = Math.max(cam.shake, 3 + cost);
       sfx('shield_block');
-      addSparks(p.x + (p.face > 0 ? p.w + 4 : -4), p.y + 11, -p.face, 12, '#38bdf8');
-      if (p.shieldStamina <= 0) {
-        p.shielding = false; p.shieldCd = 2.0;
-        sfx('shield_break');
-        burst(p.x + 6, p.y + 11, '#ff4d66', 16, 140);
-        say('SHIELD BROKEN!', 1.2);
+
+      // Sparks change color with shieldCharge (blue → white → gold)
+      var sparkCol = p.shieldCharge >= 4.5 ? '#f5c452' : (p.shieldCharge >= 2.0 ? '#ffffff' : '#38bdf8');
+      var barX = p.x + (p.face > 0 ? p.w + 4 : -4);
+      var barY = p.y + 11;
+      addSparks(barX, barY, -p.face, 8 + cost * 3, sparkCol);
+      burst(barX, barY, sparkCol, 4 + cost * 2, 90 + cost * 25);
+
+      if (p.shieldHp <= 0) {
+        triggerHeroShieldBreak(p);
       }
       return false; // Attack blocked without HP loss!
     }
@@ -1852,6 +2040,22 @@ function buildWorld() {
     var dir = (held.right ? 1 : 0) - (held.left ? 1 : 0);
     p.atkCd -= dt; p.dashCd -= dt; p.inv -= dt; p.blink -= dt; p.coyote -= dt; p.jumpBuf -= dt; p.hurt -= dt;
     p.ghostTimer -= dt; p.shootCd -= dt; p.shieldCd -= dt;
+    if (p.shieldBrokenTimer > 0) {
+      p.shieldBrokenTimer -= dt;
+      p.shieldCd = p.shieldBrokenTimer;
+      p.shielding = false;
+      if (p.shieldBrokenTimer <= 0) {
+        p.shieldBrokenTimer = 0;
+        p.shieldCd = 0;
+        p.shieldHp = p.shieldMax;
+        p.shieldCharge = 0;
+        p.shieldStamina = p.maxShieldStamina;
+        sfx('heal');
+        say('SHIELD READY!', 1.2);
+        burst(p.x + p.w / 2, p.y + p.h / 2, '#38bdf8', 16, 130);
+        burst(p.x + p.w / 2, p.y + p.h / 2, '#f5c452', 10, 150);
+      }
+    }
     if (p.shieldBlockFlash > 0) p.shieldBlockFlash -= dt;
     if (p.parryFlash > 0) p.parryFlash -= dt;
     if (p.shieldBash > 0) p.shieldBash -= dt;
@@ -1867,8 +2071,8 @@ function buildWorld() {
     if (edge.jump) p.jumpBuf = 0.12;
 
     // --- Shield Control (Hold L / Touch Shield) ---
-    var wantsShield = held.shield && p.shieldCd <= 0 && p.dash <= 0 && p.atk <= 0 && p.hurt <= 0;
-    if (wantsShield && p.shieldStamina > 0) {
+    var wantsShield = held.shield && p.shieldBrokenTimer <= 0 && p.shieldCd <= 0 && p.dash <= 0 && p.atk <= 0 && p.hurt <= 0;
+    if (wantsShield && p.shieldHp > 0) {
       if (!p.shielding) {
         sfx('shield_up');
         p.shieldTime = 0;
@@ -1878,15 +2082,22 @@ function buildWorld() {
     } else {
       p.shielding = false;
       p.shieldTime = 0;
-      if (p.shieldCd <= 0 && p.shieldStamina < p.maxShieldStamina) {
-        p.shieldStamina = Math.min(p.maxShieldStamina, p.shieldStamina + dt * 38);
+      if (p.shieldBrokenTimer <= 0) {
+        if (p.shieldHp < p.shieldMax) {
+          p.shieldHp = Math.min(p.shieldMax, p.shieldHp + dt * 1.5);
+        }
+        if (p.shieldCharge > 0) {
+          p.shieldCharge = Math.max(0, p.shieldCharge - dt * 2.5);
+        }
       }
     }
+    p.shieldStamina = (p.shieldHp / p.shieldMax) * 100;
 
     // --- Shield Bash: Press Attack (J) while Shielding ---
-    if (wantsShield && edge.attack && p.shieldBash <= 0 && p.shieldStamina >= 15) {
+    if (wantsShield && edge.attack && p.shieldBash <= 0 && p.shieldHp >= 1.0) {
       p.shieldBash = 0.24;
-      p.shieldStamina = Math.max(0, p.shieldStamina - 15);
+      p.shieldHp = Math.max(0.5, p.shieldHp - 1.0);
+      p.shieldStamina = (p.shieldHp / p.shieldMax) * 100;
       p.vx = p.face * 230;
       sfx('shield_block');
       sfx('slash2');
@@ -2205,7 +2416,7 @@ function buildWorld() {
             }
             if (e.state === 'strike') {
               var sb = { x: e.face > 0 ? e.x + e.w : e.x - 24, y: e.y + 6, w: 24, h: 14 };
-              if (overlap(sb, p)) damagePlayer(1, ecx);
+              if (overlap(sb, p)) damagePlayer(1, ecx, 1);
             }
           } else if (e.state === 'patrol') {
             e.x += e.dir * 28 * dt; e.face = e.dir;
@@ -2227,7 +2438,7 @@ function buildWorld() {
           }
           if (e.state === 'strike') {
             var sb = { x: e.face > 0 ? e.x + e.w : e.x - 24, y: e.y + 6, w: 24, h: 14 };
-            if (overlap(sb, p)) damagePlayer(1, ecx);
+            if (overlap(sb, p)) damagePlayer(1, ecx, 1);
           }
         }
       }
@@ -2285,7 +2496,8 @@ function buildWorld() {
 
     // body contact damage
     if (!e.dead && !p.dead && (e.type !== 'boss' && e.type !== 'boss2' || (bossActive && state === 'play')) && overlap({ x: e.x + 2, y: e.y + 2, w: e.w - 4, h: e.h - 3 }, p)) {
-      if (damagePlayer(1, ecx) && e.type === 'bat') {
+      var mobCost = (e.type === 'boss' || e.type === 'boss2') ? 3 : 1;
+      if (damagePlayer(1, ecx, mobCost) && e.type === 'bat') {
         e.state = 'recover'; e.st = 0.7; e.vx = (ecx < pcx ? -1 : 1) * 80; e.vy = -50;
       }
     }
@@ -2444,7 +2656,7 @@ function buildWorld() {
       }
       var chb = { x: e.face > 0 ? e.x + e.w - 10 : e.x - 14, y: e.y + 10, w: 24, h: e.h - 14 };
       if (overlap(chb, player)) {
-        damagePlayer(1, ecx);
+        damagePlayer(1, ecx, 3);
       }
       if (e.st <= 0) {
         e.state = 'swing';
@@ -2513,7 +2725,7 @@ function buildWorld() {
           h: 30
         };
         if (overlap(hb, player)) {
-          damagePlayer(1, ecx);
+          damagePlayer(1, ecx, 3);
         }
       }
       if (e.st <= 0) {
@@ -2830,6 +3042,7 @@ function buildWorld() {
     if (hitstop > 0) { hitstop -= dt; return false; }
     runTime += dt;
     updatePlayer(dt);
+    updateShockwaves(dt);
     var p = player;
 
     // Check Trigger for Cinematic Boss Intro
@@ -2916,7 +3129,7 @@ function buildWorld() {
 
         if (!p.dead && overlap(pr, p)) {
           var facingProj = (p.face > 0 && pr.x >= p.x) || (p.face < 0 && pr.x <= p.x + p.w);
-          if (p.shielding && facingProj) {
+          if (p.shielding && facingProj && p.shieldHp > 0 && p.shieldBrokenTimer <= 0) {
             var isParry = (p.shieldTime !== undefined && p.shieldTime <= 0.22);
             if (isParry) {
               // PERFECT DEFLECTION! Reflect projectile back at boss/enemies!
@@ -2931,8 +3144,8 @@ function buildWorld() {
               burst(pr.x + pr.w / 2, pr.y + pr.h / 2, '#38bdf8', 12, 160, 0, 2);
               say('PERFECT PARRY!', 0.8);
             } else {
-              // Standard block: safely absorb projectile without multi-hit
-              damagePlayer(1, pr.x + pr.w / 2);
+              // Standard block: safely absorb projectile without multi-hit (cost = 2)
+              damagePlayer(1, pr.x + pr.w / 2, 2);
               pr.life = 0;
               burst(pr.x + pr.w / 2, pr.y + pr.h / 2, '#38bdf8', 10, 110, 0, 1.5);
             }
@@ -3608,27 +3821,69 @@ function buildWorld() {
       var isParrying = (p.shieldTime !== undefined && p.shieldTime <= 0.22);
       var barX = 14, barY = -15;
 
-      // Outer Energy Aegis Arc
-      ctx.strokeStyle = isParrying ? '#f5c452' : (p.shieldBlockFlash > 0 ? '#ffffff' : '#38bdf8');
-      ctx.lineWidth = isParrying ? 3.5 : (p.shieldBlockFlash > 0 ? 2.5 : 1.8);
-      ctx.shadowColor = isParrying ? '#f5c452' : (p.shieldBlockFlash > 0 ? '#38bdf8' : '#0284c7');
-      ctx.shadowBlur = isParrying ? 16 : (p.shieldBlockFlash > 0 ? 12 : 8);
+      var charge = Math.max(0, p.shieldCharge || 0);
+      // Color shifts: blue → white → gold as charge increases
+      var shieldCol = charge >= 4.5 ? '#f5c452' : (charge >= 2.0 ? '#ffffff' : '#38bdf8');
+      var coreCol = charge >= 4.5 ? '#fef08a' : (charge >= 2.0 ? '#e0f2fe' : '#7dd3fc');
+      var glowCol = charge >= 4.5 ? '#f59e0b' : (charge >= 2.0 ? '#38bdf8' : '#0284c7');
+      if (isParrying) {
+        shieldCol = '#f5c452'; coreCol = '#fef08a'; glowCol = '#f5c452';
+      } else if (p.shieldBlockFlash > 0) {
+        shieldCol = '#ffffff';
+      }
 
+      var arcR = 17 + Math.min(6, charge * 0.9);
+      var arcW = isParrying ? 3.5 : (1.8 + Math.min(2.2, charge * 0.4));
+      var glowBlur = isParrying ? 18 : (8 + Math.min(18, charge * 3.2));
+
+      // Outer Energy Aegis Arc
+      ctx.strokeStyle = shieldCol;
+      ctx.lineWidth = arcW;
+      ctx.shadowColor = glowCol;
+      ctx.shadowBlur = glowBlur;
+
+      var arcSpan = 0.65 + Math.min(0.25, charge * 0.04);
       ctx.beginPath();
-      ctx.arc(barX, barY, 17, -0.65, 0.65);
+      ctx.arc(barX, barY, arcR, -arcSpan, arcSpan);
       ctx.stroke();
 
-      // Inner Crest Core
-      ctx.fillStyle = isParrying ? '#fef08a' : '#7dd3fc';
-      ctx.fillRect(barX + 2, barY - 4, 3, 8);
-
-      // Deflection / Block Impact Flash
-      if (p.shieldBlockFlash > 0 || p.parryFlash > 0) {
-        ctx.fillStyle = isParrying ? '#ffffff' : '#e0f2fe';
+      // Second Inner Aegis Resonance Layer
+      if (charge >= 2.0) {
+        ctx.strokeStyle = coreCol;
+        ctx.lineWidth = Math.max(1, arcW * 0.5);
         ctx.beginPath();
-        ctx.arc(barX + 3, barY, 7, 0, Math.PI * 2);
+        ctx.arc(barX, barY, arcR - 3.5, -arcSpan * 0.8, arcSpan * 0.8);
+        ctx.stroke();
+      }
+
+      // Inner Crest Core Gem
+      ctx.fillStyle = coreCol;
+      ctx.fillRect(barX + 2, barY - 4 - Math.min(2, Math.floor(charge * 0.4)), 3, 8 + Math.min(4, Math.floor(charge * 0.8)));
+
+      // Deflection / Block Impact Flash & Sparks
+      if (p.shieldBlockFlash > 0 || p.parryFlash > 0) {
+        ctx.fillStyle = isParrying ? '#ffffff' : coreCol;
+        ctx.beginPath();
+        ctx.arc(barX + 3, barY, 7 + Math.min(4, charge * 0.6), 0, Math.PI * 2);
         ctx.fill();
       }
+      ctx.restore();
+    }
+
+    // Broken Shield visual if player presses/holds shield during cooldown
+    if (held.shield && p.shieldBrokenTimer > 0) {
+      ctx.save();
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.6;
+      ctx.shadowColor = '#dc2626';
+      ctx.shadowBlur = 6;
+      var bx = 6, by = -30;
+      ctx.beginPath();
+      ctx.arc(bx, by, 7, -0.7, 0.7);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(bx + 4, by - 5); ctx.lineTo(bx - 1, by); ctx.lineTo(bx + 3, by + 5);
+      ctx.stroke();
       ctx.restore();
     }
 
@@ -4655,27 +4910,62 @@ function drawResurrectionCutscene(camX) {
       }
     }
 
-    var gW = 54, gX = 8, gY = 22;
-    var stPct = player.shieldStamina / player.maxShieldStamina;
-    R(gX - 1, gY - 1, gW + 2, 6, '#0c0714');
-    R(gX, gY, gW, 4, '#24141e');
-    var isParrying = player.shielding && player.shieldTime <= 0.22;
-    var stCol = player.shieldCd > 0 ? '#ff3b4d' : (isParrying ? '#f5c452' : '#38bdf8');
-    R(gX, gY, Math.round(gW * stPct), 4, stCol);
+    var gW = 59, gX = 8, gY = 22;
+    R(gX - 1, gY - 1, gW + 2, 7, '#0c0714');
+    R(gX, gY, gW, 5, '#171124');
 
-    var shieldLabel = 'SHIELD';
-    var shieldCol = '#a695ba';
-    if (player.shieldCd > 0) {
-      shieldLabel = 'SHIELD BROKEN (' + Math.ceil(player.shieldCd) + 's)';
-      shieldCol = '#ff4d66';
-    } else if (isParrying) {
-      shieldLabel = 'PARRY READY!';
-      shieldCol = '#f5c452';
-    } else if (player.shielding) {
-      shieldLabel = 'GUARD (J: BASH)';
-      shieldCol = '#38bdf8';
+    if (player.shieldBrokenTimer > 0) {
+      // Cooldown fill while recharging (filling up over 6s cooldown)
+      var cdProgress = clamp(1 - (player.shieldBrokenTimer / 6.0), 0, 1);
+      var cdFillW = Math.round(gW * cdProgress);
+      var cdCol = (Math.floor(t * 6) % 2 === 0) ? '#ef4444' : '#dc2626';
+      R(gX, gY, cdFillW, 5, cdCol);
+      if (cdFillW > 0) R(gX + cdFillW - 1, gY, 1, 5, '#ffffff');
+
+      var cdLabel = 'SHIELD BROKEN (' + player.shieldBrokenTimer.toFixed(1) + 's)';
+      txt(cdLabel, gX + gW + 6, gY - 1, '#ff6b81', 6, 'left');
+    } else {
+      var hpVal = clamp(player.shieldHp, 0, player.shieldMax);
+      var isLow = hpVal <= 2.0;
+      var isParrying = player.shielding && player.shieldTime <= 0.22;
+      var charge = Math.max(0, player.shieldCharge || 0);
+
+      // Color tier based on charge and low health
+      var barCol = charge >= 4.5 ? '#f5c452' : (charge >= 2.0 ? '#ffffff' : '#38bdf8');
+      if (isParrying) barCol = '#f5c452';
+      else if (isLow && Math.floor(t * 8) % 2 === 0) barCol = '#ef4444'; // Flashing when low!
+
+      // Draw 6 distinct segment ticks (9px each + 1px gap = 59px)
+      var segW = 9, gap = 1;
+      for (var si = 0; si < 6; si++) {
+        var segX = gX + si * (segW + gap);
+        if (si + 1 <= Math.floor(hpVal)) {
+          R(segX, gY, segW, 5, barCol);
+          R(segX, gY, segW, 1, '#ffffff'); // bright crest highlight
+        } else if (si < hpVal) {
+          var fracW = Math.max(1, Math.round(segW * (hpVal - si)));
+          R(segX, gY, fracW, 5, barCol);
+        } else {
+          R(segX, gY, segW, 5, '#241738');
+        }
+      }
+
+      var shieldLabel = 'SHIELD';
+      var shieldCol = '#a695ba';
+      if (isParrying) {
+        shieldLabel = 'PARRY READY!';
+        shieldCol = '#f5c452';
+      } else if (player.shielding) {
+        var chgSuffix = charge > 0 ? (' | CHG ' + Math.round(charge)) : '';
+        shieldLabel = 'GUARD [' + Math.ceil(hpVal) + '/6' + chgSuffix + ']';
+        shieldCol = charge >= 4.5 ? '#f5c452' : (charge >= 2.0 ? '#ffffff' : '#38bdf8');
+      } else {
+        var chgDecay = charge > 0 ? (' | CHG ' + Math.round(charge)) : '';
+        shieldLabel = 'SHIELD [' + Math.ceil(hpVal) + '/6' + chgDecay + '] (L)';
+        shieldCol = isLow ? '#ef4444' : '#94a3b8';
+      }
+      txt(shieldLabel, gX + gW + 6, gY - 1, shieldCol, 6, 'left');
     }
-    txt(shieldLabel, gX + gW + 6, gY - 2, shieldCol, 6, 'left');
 
     txt('SCORE ' + score, W - 8, 8, '#f5c452', 8, 'right');
     var pct = clamp(Math.round(player.x / (LEVEL_W - 40) * 100), 0, 100);
@@ -5033,6 +5323,9 @@ function drawResurrectionCutscene(camX) {
       }
     }
 
+    // Shockwaves
+    drawShockwaves(camX);
+
     // World particles
     for (var q = 0; q < parts.length; q++) {
       var pa = parts[q];
@@ -5105,7 +5398,8 @@ function drawResurrectionCutscene(camX) {
       ctx.strokeRect(4, 4, 256, 18);
       var bHp = boss2 ? Math.round(boss2.hp) : (boss ? Math.round(boss.hp) : 'none');
       var rT = (state === 'resurrection') ? resurrectionTimer.toFixed(1) : (state === 'ending' ? endingTimer.toFixed(1) : winTimer.toFixed(1));
-      var dbgTxt = `ST:${state} | PH:${endingPhase} | T:${rT}s | B2_HP:${bHp}`;
+      var shStatus = player ? (player.shieldBrokenTimer > 0 ? ('CD:' + player.shieldBrokenTimer.toFixed(1) + 's') : (Math.ceil(player.shieldHp) + '/6(C:' + Math.round(player.shieldCharge) + ')')) : 'none';
+      var dbgTxt = `ST:${state} | SH:${shStatus} | T:${rT}s | B2_HP:${bHp}`;
       txt(dbgTxt, 8, 15, '#f5c452', 6.5, 'left');
       ctx.restore();
     }
@@ -5154,6 +5448,7 @@ function drawResurrectionCutscene(camX) {
     get coins() { return coins; },
     get bossMinionKills() { return bossMinionKills; },
     damageEnemy: damageEnemy,
+    damagePlayer: damagePlayer,
     get state() { return state; },
     set state(v) { state = v; },
     get endingTimer() { return endingTimer; },
@@ -5210,6 +5505,16 @@ function drawResurrectionCutscene(camX) {
     killSkeletonKing: function() {
       if (boss2 && !boss2.dead) {
         damageEnemy(boss2, 999, 1);
+      }
+    },
+    get heroShockwaves() { return heroShockwaves; },
+    triggerHeroShieldBreak: triggerHeroShieldBreak,
+    updateShockwaves: updateShockwaves,
+    breakShield: function (charge) {
+      if (player && !player.dead) {
+        player.shieldCharge = charge !== undefined ? charge : 6;
+        player.shieldHp = 0;
+        triggerHeroShieldBreak(player);
       }
     },
     get DEBUG() { return DEBUG; },
