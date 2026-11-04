@@ -682,9 +682,34 @@ const BG_IMG = new Image();
     Enter: 'start', KeyM: 'mute'
   };
   var held = {}, edge = {};
+  var DEBUG = false;
+  var showDebugOverlay = false;
   function press(a) { if (!held[a]) edge[a] = true; held[a] = true; ensureAudio(); }
   function release(a) { held[a] = false; }
   window.addEventListener('keydown', function (e) {
+    if (e.code === 'KeyO') {
+      showDebugOverlay = !showDebugOverlay;
+      say(showDebugOverlay ? 'DEBUG OVERLAY ON' : 'DEBUG OVERLAY OFF', 1.0);
+    }
+    if (DEBUG || showDebugOverlay) {
+      if (e.code === 'KeyK') {
+        if (state === 'play') {
+          if (boss && !boss.dead) {
+            damageEnemy(boss, 999, 1);
+            say('DEBUG: WARDEN KILLED', 1.0);
+          } else if (!boss2) {
+            window.__GAME.triggerResurrection();
+            say('DEBUG: RESURRECTION TRIGGERED', 1.0);
+          }
+        }
+      }
+      if (e.code === 'KeyP') {
+        if (boss2 && !boss2.dead) {
+          damageEnemy(boss2, 999, 1);
+          say('DEBUG: SKELETON KING KILLED', 1.0);
+        }
+      }
+    }
     if (/^Digit[1-4]$/.test(e.code) && boss2) {
       boss2.debugPhase(+e.code[5]);
     }
@@ -911,7 +936,12 @@ const BG_IMG = new Image();
         sfx('shield_block');
         burst(this.x + (this.face > 0 ? this.w / 2 : -this.w / 2), this.cy, '#c084fc', 8, 120);
       }
-      this.hp = Math.max(this.hp - d, (WARDEN_PHASE_AT[this.phase] || 0) * this.hpMax - 1);
+      if (d >= 900) {
+        this.hp = 0;
+        this.phase = 4;
+      } else {
+        this.hp = Math.max(this.hp - d, (WARDEN_PHASE_AT[this.phase] || 0) * this.hpMax - 1);
+      }
       this.flash = 0.14;
       burst(this.x, this.cy, this.ps.col, 6);
       if (this.hp <= 0) {
@@ -940,6 +970,8 @@ const BG_IMG = new Image();
         cam.shake = 22;
         sfx('boom');
         projs = [];
+        G.hit = []; G.proj = []; G.zones = []; G.beams = []; G.mins = [];
+        if (player) { player.inv = 10; player.invuln = 10; }
         burst(this.x, this.cy, '#dfd5bd', 50, 240);
         burst(this.x, this.cy, '#7b2cbf', 40, 260);
         burst(this.x, this.cy, '#f5c452', 30, 200);
@@ -1283,7 +1315,12 @@ const BG_IMG = new Image();
       cam.shake = Math.max(cam.shake, G.shake);
       G.shake = Math.max(0, G.shake - dt * 40);
     }
-    if (!boss2 || boss2.dead) return;
+    if (!boss2 || boss2.dead || winTimer > 0 || state === 'resurrection' || state === 'ending') {
+      G.hit = []; G.proj = []; G.zones = []; G.beams = [];
+      for (const f of G.fx) { f.x += f.vx * dt; f.y += f.vy * dt; f.life -= dt; }
+      G.fx = G.fx.filter(f => f.life > 0);
+      return;
+    }
 
     // 1. Process G.hit (melee hitboxes)
     for (const h of G.hit) {
@@ -1445,6 +1482,7 @@ function buildWorld() {
     resurrectionPhase = 0;
     stolenHeartTrail = [];
     hudHeartFlash = 0;
+    G.hit = []; G.proj = []; G.zones = []; G.beams = []; G.mins = []; G.fx = []; G.t = 0; G.shake = 0;
     buildWorld();
     player = makePlayer(40);
     score = 0; runTime = 0; checkpointX = 40; bossActive = false; minX = 0; hitstop = 0; winTimer = 0;
@@ -1467,6 +1505,7 @@ function buildWorld() {
       bossDefeated = null;
       princess.active = false;
       projs = [];
+      G.hit = []; G.proj = []; G.zones = []; G.beams = []; G.mins = []; G.fx = []; G.t = 0; G.shake = 0;
       bossActive = true; minX = ARENA_MIN - 10;
       bossIntroTimer = 0; endingTimer = 0; resurrectionTimer = 0;
       hudHeartFlash = 0; stolenHeartTrail = [];
@@ -1486,6 +1525,7 @@ function buildWorld() {
       bossDefeated = null;
       princess.active = false;
       projs = [];
+      G.hit = []; G.proj = []; G.zones = []; G.beams = []; G.mins = []; G.fx = []; G.t = 0; G.shake = 0;
       bossActive = false; minX = 0;
       bossIntroTimer = 0; endingTimer = 0;
       cam.x = clamp(player.x - W / 2, 0, LEVEL_W - W);
@@ -1547,7 +1587,7 @@ function buildWorld() {
   /* ---------- damage system ---------- */
   function damagePlayer(d, fromX) {
     var p = player;
-    if (p.inv > 0 || p.dash > 0 || p.dead) return false;
+    if (p.inv > 0 || p.dash > 0 || p.dead || state === 'resurrection' || state === 'ending' || winTimer > 0 || (bossDefeated && bossDefeated.isKing)) return false;
 
     // Check Hero Shield block & Perfect Parry
     var facingAttack = (p.face > 0 && fromX >= p.x) || (p.face < 0 && fromX <= p.x + p.w);
@@ -1663,22 +1703,30 @@ function buildWorld() {
       return;
     }
 
-    // Check Skeleton King Bone Shield
-    if (e.type === 'boss2' && e.shieldActive && !isSpecial) {
-      e.shieldHp -= d;
-      e.shieldFlash = 0.16;
-      sfx('shield_block');
-      addSparks(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, dirx, 14, '#c084fc');
-      burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#7b2cbf', 10, 130);
-      if (e.shieldHp <= 0) {
-        e.shieldActive = false; e.shieldCd = 9.0;
-        e.state = 'stagger'; e.st = 2.2; e.flash = 0.28;
-        sfx('shield_break'); sfx('boom'); cam.shake = 10;
-        burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#dfd5bd', 24, 200);
-        burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#a855f7', 20, 180);
-        say('BONE SHIELD SHATTERED!', 1.6);
+    // Check Skeleton King Bone Shield / Guard
+    if (e.type === 'boss2' && (e.shieldActive || e.block) && !isSpecial) {
+      if (e.shieldActive) {
+        e.shieldHp -= d;
+        e.shieldFlash = 0.16;
+        sfx('shield_block');
+        addSparks(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, dirx, 14, '#c084fc');
+        burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#7b2cbf', 10, 130);
+        if (e.shieldHp <= 0) {
+          e.shieldActive = false; e.shieldCd = 9.0;
+          e.state = 'stagger'; e.st = 2.2; e.flash = 0.28;
+          sfx('shield_break'); sfx('boom'); cam.shake = 10;
+          burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#dfd5bd', 24, 200);
+          burst(e.x + (e.face > 0 ? e.w + 6 : -6), e.y + 18, '#a855f7', 20, 180);
+          say('BONE SHIELD SHATTERED!', 1.6);
+        }
+        return;
       }
-      return;
+      if (e.block) {
+        d = Math.max(1, Math.round(d * 0.25));
+        e.countered = true;
+        sfx('shield_block');
+        burst(e.x + (e.face > 0 ? e.w / 2 : -e.w / 2), e.y - 25, '#c084fc', 8, 120);
+      }
     }
 
     // Check Skeleton Spiked Buckler Shield Deflection
@@ -1750,6 +1798,8 @@ function buildWorld() {
         cam.shake = 22;
         sfx('boom');
         projs = [];
+        G.hit = []; G.proj = []; G.zones = []; G.beams = []; G.mins = [];
+        if (player) { player.inv = 10; player.invuln = 10; }
         burst(e.x + e.w / 2, e.y + e.h / 2, '#dfd5bd', 50, 240);
         burst(e.x + e.w / 2, e.y + e.h / 2, '#7b2cbf', 40, 260);
         burst(e.x + e.w / 2, e.y + e.h / 2, '#f5c452', 30, 200);
@@ -3011,6 +3061,10 @@ function buildWorld() {
         endingPhase = 'reunion';
         princess.active = true;
         princess.kissTriggered = false;
+        bossActive = false;
+        bossDefeated = null;
+        projs = [];
+        G.hit = []; G.proj = []; G.zones = []; G.beams = []; G.mins = [];
         playMusic('ending');
         sfx('win');
         if (score > best) { best = score; try { localStorage.setItem('ashen-vale-best', String(best)); } catch (e2) {} }
@@ -3654,7 +3708,7 @@ function buildWorld() {
       return;
     }
     if (e.type === 'boss2') {
-      drawSkeletonKing(e, x, y);
+      drawSkeletonKing(e, x, y, camX);
       return;
     }
 
@@ -3969,7 +4023,8 @@ function buildWorld() {
      - Blade Throw & Wing Blades
      - Spectral Void Aegis (Shield) & Hurt Stagger
      ========================================================= */
-  function drawSkeletonKing(e, x, y) {
+  function drawSkeletonKing(e, x, y, camX) {
+    if (camX === undefined) camX = Math.round(cam.x);
     var atlas = ATLAS_DATA.boss2;
     var hasAtlas = atlas && REVIVED_BOSS_IMG && (REVIVED_BOSS_IMG.naturalWidth > 0 || REVIVED_BOSS_IMG.width > 0);
 
@@ -4213,7 +4268,7 @@ function drawResurrectionCutscene(camX) {
         drawSkeletonKing({
           x: wx, y: riseY, w: 42, h: 58, face: -1, hp: 30, maxhp: 30,
           state: 'enrage', anim: resurrectionTimer, wingTimer: resurrectionTimer * 2
-        }, Math.round(wx - camX), Math.round(riseY));
+        }, Math.round(wx - camX), Math.round(riseY), camX);
       }
       ctx.restore();
     }
@@ -4861,7 +4916,7 @@ function drawResurrectionCutscene(camX) {
     // Enemies & Boss
     for (var ci = 0; ci < corpses.length; ci++) drawCorpse(corpses[ci], camX);
     for (var e = 0; e < enemies.length; e++) drawEnemy(enemies[e], camX);
-    if (bossDefeated) drawBossDefeat(bossDefeated, camX);
+    if (bossDefeated && state !== 'resurrection') drawBossDefeat(bossDefeated, camX);
     if (state === 'resurrection') drawResurrectionCutscene(camX);
 
     // The Princess & Hero (Ending & Gameplay)
@@ -5041,6 +5096,19 @@ function drawResurrectionCutscene(camX) {
     }
 
     drawHUD();
+
+    if (showDebugOverlay || DEBUG) {
+      ctx.save();
+      R(4, 4, 256, 18, 'rgba(10, 5, 20, 0.85)');
+      ctx.strokeStyle = '#c084fc';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(4, 4, 256, 18);
+      var bHp = boss2 ? Math.round(boss2.hp) : (boss ? Math.round(boss.hp) : 'none');
+      var rT = (state === 'resurrection') ? resurrectionTimer.toFixed(1) : (state === 'ending' ? endingTimer.toFixed(1) : winTimer.toFixed(1));
+      var dbgTxt = `ST:${state} | PH:${endingPhase} | T:${rT}s | B2_HP:${bHp}`;
+      txt(dbgTxt, 8, 15, '#f5c452', 6.5, 'left');
+      ctx.restore();
+    }
   }
 
   /* ---------- main game loop ---------- */
@@ -5054,12 +5122,20 @@ function drawResurrectionCutscene(camX) {
     last = ts; acc += dt;
     var step = 1 / 60, n = 0;
     while (acc >= step && n < 6) {
-      var consumed = update(step);
-      if (consumed !== false) edge = {};
+      try {
+        var consumed = update(step);
+        if (consumed !== false) edge = {};
+      } catch (err) {
+        console.error("Game loop error in update():", err);
+      }
       acc -= step; n++;
     }
     if (n === 6) acc = 0;
-    render();
+    try {
+      render();
+    } catch (err) {
+      console.error("Game loop error in render():", err);
+    }
   }
 
   if (document.fonts && document.fonts.load) {
@@ -5124,15 +5200,30 @@ function drawResurrectionCutscene(camX) {
       enemies.push(boss2);
       playMusic('boss_phase2');
     },
-    killSkeletonKing: function() {
-      if (boss2) {
-        damageEnemy(boss2, 999, 'naks_slash');
+    killWarden: function() {
+      if (boss && !boss.dead) {
+        damageEnemy(boss, 999, 1);
+      } else {
+        window.__GAME.triggerResurrection();
       }
-    }
+    },
+    killSkeletonKing: function() {
+      if (boss2 && !boss2.dead) {
+        damageEnemy(boss2, 999, 1);
+      }
+    },
+    get DEBUG() { return DEBUG; },
+    set DEBUG(v) { DEBUG = v; },
+    get showDebugOverlay() { return showDebugOverlay; },
+    set showDebugOverlay(v) { showDebugOverlay = v; }
   };
 
   function checkHash() {
     var h = (window.location.hash || '').toLowerCase();
+    if (h.indexOf('debug') !== -1) {
+      DEBUG = true;
+      showDebugOverlay = true;
+    }
     if (h === '#resurrection') {
       reset();
       startGame();
