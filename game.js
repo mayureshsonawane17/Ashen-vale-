@@ -419,6 +419,7 @@ const BG_IMG = new Image();
     KeyL: 'shield',
     KeyU: 'shoot', KeyI: 'shoot', KeyF: 'shoot',
     KeyH: 'debug_hitboxes',
+    KeyR: 'restart',
     Enter: 'start', KeyM: 'mute'
   };
   var held = {}, edge = {};
@@ -1985,6 +1986,7 @@ function buildWorld() {
         burst(e.x + e.w / 2, e.y + e.h / 2, '#ff8a3d', 60, 260);
         burst(e.x + e.w / 2, e.y + e.h / 2, '#fff0a8', 30, 200);
         playMusic('none'); // Beat of eerie silence!
+        say('WARDEN DEFEATED!', 2.5);
         state = 'resurrection';
         resurrectionTimer = 0;
         resurrectionPhase = 0;
@@ -2774,6 +2776,12 @@ function buildWorld() {
 
     updateMusic(dt);
 
+    if (edge.restart) {
+      reset();
+      startGame();
+      return;
+    }
+
     if (state === 'title') {
       if (edge.start || edge.jump || edge.attack) startGame();
       return;
@@ -2793,7 +2801,7 @@ function buildWorld() {
     }
     if (state === 'dead') {
       stepParticles(dt);
-      if (edge.start) respawn();
+      if (edge.start || edge.restart) respawn();
       return;
     }
     if (state === 'resurrection') {
@@ -2816,7 +2824,7 @@ function buildWorld() {
         if (player && player.hp > 1) {
           player.hp -= 1;
         }
-        resurrectionTimer = 5.2;
+        resurrectionTimer = 7.1;
       }
 
       // Phase 0: 0.0s - 0.5s: Ominous Silence & Camera centering
@@ -3044,7 +3052,7 @@ function buildWorld() {
       // Phase 4: Final Title Screen (>= 22.0s)
       else {
         endingPhase = 'final_title';
-        if (edge.start || edge.jump || edge.attack) {
+        if (edge.start || edge.restart || edge.jump || edge.attack) {
           reset();
           state = 'play';
         }
@@ -3053,7 +3061,7 @@ function buildWorld() {
     }
     if (state === 'win') {
       stepParticles(dt);
-      if (edge.start) { reset(); state = 'play'; }
+      if (edge.start || edge.restart) { reset(); state = 'play'; }
       return;
     }
 
@@ -4415,17 +4423,17 @@ function buildWorld() {
     // 6. Draw Boss Sprite & Auras
     ctx.save();
     ctx.translate(x, y);
-    ctx.globalAlpha = e.vis;
-    if (e.flash > 0) ctx.filter = 'brightness(2.2)';
+    ctx.globalAlpha = (e && typeof e.vis === 'number') ? e.vis : 1;
+    if (e && e.flash > 0) ctx.filter = 'brightness(2.2)';
 
     // Telegraph Flashing Exclamation Indicator
-    if (e.tele) {
+    if (e && e.tele) {
       ctx.fillStyle = e.tele.col;
       ctx.globalAlpha = 0.25 + 0.25 * Math.sin(G.t * 30);
       ctx.beginPath();
       ctx.arc(0, -32, 35 + 5 * Math.sin(G.t * 30), 0, Math.PI * 2);
       ctx.fill();
-      ctx.globalAlpha = e.vis;
+      ctx.globalAlpha = (e && typeof e.vis === 'number') ? e.vis : 1;
       ctx.fillStyle = e.tele.col;
       ctx.font = 'bold 18px monospace';
       ctx.textAlign = 'center';
@@ -4433,7 +4441,7 @@ function buildWorld() {
     }
 
     // Phase 4 Violet Flames Radial Aura
-    if (e.phase >= 4) {
+    if (e && e.phase >= 4) {
       const g = ctx.createRadialGradient(0, -35, 4, 0, -35, 36 + 6 * Math.sin(G.t * 10));
       g.addColorStop(0, '#ffffff');
       g.addColorStop(0.35, '#d946ef');
@@ -4444,23 +4452,28 @@ function buildWorld() {
     }
 
     // Multi-frame animation state selection
-    var animCfg = WARDEN_ANIMS[e.anim] || WARDEN_ANIMS['idle'];
-    if (e.anim === 'idle' && e.flying) animCfg = WARDEN_ANIMS['hover'];
-    if (e.anim === 'idle' && e.phase >= 4) animCfg = WARDEN_ANIMS['finalForm'];
-    if (e.anim === 'fly' && e.phase >= 4) animCfg = WARDEN_ANIMS['finalForm'];
+    var animKey = (e && typeof e.anim === 'string') ? e.anim : 'idle';
+    var animCfg = WARDEN_ANIMS[animKey] || WARDEN_ANIMS['idle'];
+    if (animKey === 'idle' && e && e.flying) animCfg = WARDEN_ANIMS['hover'];
+    if (animKey === 'idle' && e && e.phase >= 4) animCfg = WARDEN_ANIMS['finalForm'];
+    if (animKey === 'fly' && e && e.phase >= 4) animCfg = WARDEN_ANIMS['finalForm'];
 
     var fCount = (animCfg && animCfg.frames) ? animCfg.frames.length : 1;
-    var fIdx = Math.floor(e.at * (animCfg.rate || 6));
+    var atTime = (e && typeof e.at === 'number') ? e.at : (e && typeof e.anim === 'number' ? e.anim : t);
+    var fIdx = Math.floor(atTime * (animCfg.rate || 6));
     if (animCfg && animCfg.loop) fIdx = fIdx % fCount;
     else fIdx = Math.min(fIdx, fCount - 1);
     var frName = animCfg ? animCfg.frames[fIdx] : 'idle_0';
 
     var fr = (atlas && atlas[frName]) || (atlas && atlas['idle_0']) || { x: 0, y: 0, w: 40, h: 50, ox: 20, oy: 50 };
     var SCALE = 0.88;
+    var face = (e && typeof e.face === 'number') ? e.face : -1;
+    var ps = (e && e.ps) || (WARDEN_PHASES[e && e.phase] || WARDEN_PHASES[1]);
+    var bossCol = (ps && ps.col) || '#b46cff';
 
-    ctx.scale(e.face * SCALE, SCALE);
-    ctx.shadowColor = e.ps.col;
-    ctx.shadowBlur = (e.phase >= 4 ? 20 : 12) + Math.sin(t * 8) * 6;
+    ctx.scale(face * SCALE, SCALE);
+    ctx.shadowColor = bossCol;
+    ctx.shadowBlur = ((e && e.phase >= 4) ? 20 : 12) + Math.sin(t * 8) * 6;
 
     if (hasAtlas) {
       ctx.drawImage(
@@ -4470,7 +4483,7 @@ function buildWorld() {
         fr.w, fr.h
       );
     } else {
-      R(-20, -50, 40, 50, e.ps.col);
+      R(-20, -50, 40, 50, bossCol);
     }
 
     ctx.restore();
@@ -4525,7 +4538,7 @@ function drawResurrectionCutscene(camX) {
     }
     // 2. Armor Shatter & Emerging Skeleton King
     else if (resurrectionTimer >= 4.4 && resurrectionTimer < 5.4) {
-      var bFr = hasAtlas ? atlas['trans_burst'] : null;
+      var bFr = hasAtlas ? (atlas['trans_burst'] || atlas['trans_1'] || atlas['trans_2']) : null;
       var kScale = 0.48;
       ctx.save();
       if (bFr) {
@@ -4539,7 +4552,7 @@ function drawResurrectionCutscene(camX) {
     }
     // 3. The True Form Awakens (Ascending with Bat Wings)
     else {
-      var riseFr = hasAtlas ? atlas['true_form_rise'] : null;
+      var riseFr = hasAtlas ? (atlas['true_form_rise'] || atlas['trans_2'] || atlas['fly_0']) : null;
       var kScale = 0.48;
       var riseY = wy - 10 - Math.min(22, (resurrectionTimer - 5.4) * 16);
       ctx.save();
@@ -4551,9 +4564,10 @@ function drawResurrectionCutscene(camX) {
         ctx.drawImage(REVIVED_BOSS_IMG, riseFr.x, riseFr.y, riseFr.w, riseFr.h, -riseFr.ox, -riseFr.oy, riseFr.w, riseFr.h);
       } else {
         drawSkeletonKing({
-          x: wx, y: riseY, w: 42, h: 58, face: -1, hp: 30, maxhp: 30,
-          state: 'enrage', anim: resurrectionTimer, wingTimer: resurrectionTimer * 2
-        }, Math.round(wx - camX), Math.round(riseY), camX);
+          x: wx, y: riseY, w: 42, h: 58, face: -1, hp: 36, maxhp: 36,
+          phase: 1, flying: true, vis: 1, anim: 'fly', at: resurrectionTimer,
+          get ps() { return WARDEN_PHASES[this.phase]; }
+        }, Math.round(wx - camX + 18), Math.round(riseY + 58), camX);
       }
       ctx.restore();
     }
@@ -4807,7 +4821,8 @@ function drawResurrectionCutscene(camX) {
 
     var dStep = Math.min(6, Math.floor(Math.max(0, 3.2 - bd.timer) * 2.2));
     var frName = 'defeat_' + dStep;
-    var fr = (ATLAS_DATA.boss && ATLAS_DATA.boss[frName]) || ATLAS_DATA.boss['defeat_6'] || ATLAS_DATA.boss['defeat'];
+    var fr = (ATLAS_DATA.boss && ATLAS_DATA.boss[frName]) || (ATLAS_DATA.boss && (ATLAS_DATA.boss['defeat_6'] || ATLAS_DATA.boss['defeat']));
+    if (!fr || !BOSS_IMG) return;
     var BASE_SCALE = 0.58;
 
     ctx.save();
@@ -5062,7 +5077,7 @@ function drawResurrectionCutscene(camX) {
       R(0, 0, W, 22, '#000000');
       R(0, H - 22, W, 22, '#000000');
       var rMsg = '';
-      if (resurrectionTimer < 0.5) rMsg = 'A deep silence falls over the valley...';
+      if (resurrectionTimer < 0.5) rMsg = 'WARDEN DEFEATED - A deep silence falls...';
       else if (resurrectionTimer < 1.8) rMsg = 'A dark shadow emerges from the ashes...';
       else if (resurrectionTimer < 2.8) rMsg = 'The dark remnant steals a piece of your soul!';
       else if (resurrectionTimer < 3.8) rMsg = 'The stolen heart infuses the fallen champion!';
@@ -5072,6 +5087,7 @@ function drawResurrectionCutscene(camX) {
       if (rMsg) {
         txt(rMsg, W / 2, H - 15, '#f5c452', 7, 'center', '#2e1065');
       }
+      txt('PRESS ENTER OR TAP TO SKIP', W / 2, 14, '#a695ba', 7, 'center');
     }
 
     if (toast.t > 0) {
@@ -5178,6 +5194,7 @@ function drawResurrectionCutscene(camX) {
 
   /* ---------- render loop ---------- */
   function render() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     var camX = Math.round(cam.x);
     var bgx = state === 'title' ? t * 14 : camX;
@@ -5185,8 +5202,9 @@ function drawResurrectionCutscene(camX) {
     var sy = cam.shake > 0 ? Math.round(rnd(-cam.shake, cam.shake) * 0.5) : 0;
 
     ctx.save();
-    ctx.translate(sx, sy);
-    drawBackground(bgx);
+    try {
+      ctx.translate(sx, sy);
+      drawBackground(bgx);
 
     for (var i = 0; i < grounds.length; i++) drawGroundSeg(grounds[i], camX);
     for (var j = 0; j < floats.length; j++) drawFloat(floats[j], camX);
@@ -5363,7 +5381,9 @@ function drawResurrectionCutscene(camX) {
       R(Math.round(pa.x - camX), Math.round(pa.y), pa.s, pa.s, pa.c);
     }
     ctx.globalAlpha = 1;
-    ctx.restore();
+    } finally {
+      ctx.restore();
+    }
 
     // Screen embers
     for (var m = 0; m < embers.length; m++) {
@@ -5439,8 +5459,31 @@ function drawResurrectionCutscene(camX) {
   reset();
   player = makePlayer(40);
   var last = 0, acc = 0;
+  var mainLoopError = null;
+  var hasReportedLoopError = false;
+
   function frame(ts) {
     requestAnimationFrame(frame);
+
+    if (mainLoopError) {
+      if (edge.start || edge.restart || edge.jump || edge.attack) {
+        mainLoopError = null;
+        hasReportedLoopError = false;
+        reset();
+        startGame();
+        return;
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#0b0614';
+      ctx.fillRect(0, 0, W, H);
+      overlay(0.85);
+      txt('SOMETHING WENT WRONG.', W / 2, H / 2 - 12, '#ff4d66', 10, 'center');
+      if (Math.floor(Date.now() / 500) % 2 === 0) {
+        txt('PRESS ENTER TO RESTART', W / 2, H / 2 + 12, '#f5c452', 8, 'center');
+      }
+      return;
+    }
+
     if (!last) last = ts;
     var dt = Math.min(0.1, (ts - last) / 1000);
     last = ts; acc += dt;
@@ -5450,7 +5493,11 @@ function drawResurrectionCutscene(camX) {
         var consumed = update(step);
         if (consumed !== false) edge = {};
       } catch (err) {
-        console.error("Game loop error in update():", err);
+        if (!hasReportedLoopError) {
+          hasReportedLoopError = true;
+          console.error("Game loop error in update():", err);
+          mainLoopError = err;
+        }
       }
       acc -= step; n++;
     }
@@ -5458,7 +5505,11 @@ function drawResurrectionCutscene(camX) {
     try {
       render();
     } catch (err) {
-      console.error("Game loop error in render():", err);
+      if (!hasReportedLoopError) {
+        hasReportedLoopError = true;
+        console.error("Game loop error in render():", err);
+        mainLoopError = err;
+      }
     }
   }
 
@@ -5501,6 +5552,8 @@ function drawResurrectionCutscene(camX) {
     get GROUND_Y() { return GROUND_Y; },
     get LEVEL_W() { return LEVEL_W; },
     get boss2() { return boss2; },
+    get t() { return t; },
+    get resurrectionTimer() { return resurrectionTimer; },
     get resurrectionPhase() { return resurrectionPhase; },
     reset: reset,
     startGame: startGame,
@@ -5555,7 +5608,8 @@ function drawResurrectionCutscene(camX) {
 
   function checkHash() {
     var h = (window.location.hash || '').toLowerCase();
-    if (h.indexOf('debug') !== -1) {
+    var q = (window.location.search || '').toLowerCase();
+    if (h.indexOf('debug') !== -1 || q.indexOf('debug') !== -1) {
       DEBUG = true;
       showDebugOverlay = true;
     }
@@ -5631,7 +5685,7 @@ function drawResurrectionCutscene(camX) {
       princess.active = true;
       princess.kissTriggered = true;
       playMusic('ending');
-    } else if (h === '#boss') {
+    } else if (h === '#boss' || q.indexOf('debug=boss') !== -1) {
       reset();
       startGame();
       player.x = 2950;
